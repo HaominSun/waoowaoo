@@ -1,0 +1,68 @@
+name: Nightly full tests
+
+on:
+  schedule:
+    - cron: "0 18 * * *" # 18:00 UTC = 02:00 Beijing
+  workflow_dispatch:
+
+concurrency:
+  group: nightly-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  TZ: Asia/Shanghai
+
+jobs:
+  test-all:
+    name: test:all (MySQL + Redis)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: waoowaoo_test
+        ports:
+          - "3307:3306"
+        options: >-
+          --health-cmd "mysqladmin ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 20
+          --health-start-period 30s
+      redis:
+        image: redis:7-alpine
+        ports:
+          - "6380:6379"
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_EXTERNAL_SERVICES: "1"
+      DATABASE_URL: mysql://root:root@127.0.0.1:3307/waoowaoo_test
+      REDIS_HOST: 127.0.0.1
+      REDIS_PORT: "6380"
+      TZ: Asia/Shanghai
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Full test suite
+        run: npm run test:all
