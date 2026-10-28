@@ -741,6 +741,7 @@ model GlobalCharacter {
   @@index([userId])
   @@index([folderId])
   @@index([customVoiceMediaId])
+  @@index([userId, folderId, createdAt])
   @@map("global_characters")
 }
 
@@ -793,6 +794,7 @@ model GlobalLocation {
 
   @@index([userId])
   @@index([folderId])
+  @@index([userId, folderId, createdAt])
   @@map("global_locations")
 }
 
@@ -847,6 +849,7 @@ model GlobalVoice {
   @@index([userId])
   @@index([folderId])
   @@index([customVoiceMediaId])
+  @@index([userId, folderId, createdAt])
   @@map("global_voices")
 }
 
