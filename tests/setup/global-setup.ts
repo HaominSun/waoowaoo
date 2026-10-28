@@ -16,6 +16,37 @@ function parseDbUrl(dbUrl: string) {
   }
 }
 
+/**
+ * External mode runs `prisma db push --force-reset`, which wipes the database
+ * DATABASE_URL points at. Allow that only when the database name (URL path
+ * segment, query string ignored) ends with `_test`.
+ */
+function assertExternalTestDatabase(dbUrl: string | undefined) {
+  if (!dbUrl || !dbUrl.trim()) {
+    throw new Error(
+      'Refusing to force-reset: DATABASE_URL is missing. External test services only reset a database whose name ends with "_test".',
+    )
+  }
+
+  let database = ''
+  try {
+    const url = new URL(dbUrl)
+    const segment = url.pathname.replace(/^\/+/, '').split('/')[0] ?? ''
+    database = segment ? decodeURIComponent(segment) : ''
+  } catch {
+    throw new Error(
+      'Refusing to force-reset: DATABASE_URL could not be parsed. External test services only reset a database whose name ends with "_test".',
+    )
+  }
+
+  if (!database.endsWith('_test')) {
+    const shown = database || '(empty)'
+    throw new Error(
+      `Refusing to force-reset database "${shown}": database name must end with "_test". Point DATABASE_URL at a throwaway test database.`,
+    )
+  }
+}
+
 async function waitForMysql(maxAttempts = 180) {
   const db = parseDbUrl(process.env.DATABASE_URL || '')
 
@@ -91,6 +122,8 @@ export default async function globalSetup() {
       cwd: process.cwd(),
       stdio: 'inherit',
     })
+  } else {
+    assertExternalTestDatabase(process.env.DATABASE_URL)
   }
 
   await waitForMysql()
