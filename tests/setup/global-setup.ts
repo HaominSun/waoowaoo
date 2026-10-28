@@ -3,7 +3,7 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import mysql from 'mysql2/promise'
 import Redis from 'ioredis'
 import { loadTestEnv } from './env'
-import { runGlobalTeardown } from './global-teardown'
+import { isExternalTestServices, runGlobalTeardown } from './global-teardown'
 
 function parseDbUrl(dbUrl: string) {
   const url = new URL(dbUrl)
@@ -75,20 +75,31 @@ export default async function globalSetup() {
     return async () => {}
   }
 
-  execSync('docker compose -f docker-compose.test.yml down -v --remove-orphans', {
-    cwd: process.cwd(),
-    stdio: 'inherit',
-  })
+  // TEST_EXTERNAL_SERVICES=1: MySQL/Redis are provided externally (e.g. CI service
+  // containers or a local install). Skip docker compose entirely; only wait for
+  // DATABASE_URL / REDIS_HOST:REDIS_PORT, then reset schema+data ourselves
+  // (the docker path gets a clean DB from `down -v`).
+  const external = isExternalTestServices()
 
-  execSync('docker compose -f docker-compose.test.yml up -d --remove-orphans', {
-    cwd: process.cwd(),
-    stdio: 'inherit',
-  })
+  if (!external) {
+    execSync('docker compose -f docker-compose.test.yml down -v --remove-orphans', {
+      cwd: process.cwd(),
+      stdio: 'inherit',
+    })
+
+    execSync('docker compose -f docker-compose.test.yml up -d --remove-orphans', {
+      cwd: process.cwd(),
+      stdio: 'inherit',
+    })
+  }
 
   await waitForMysql()
   await waitForRedis()
 
-  execSync('npx prisma db push --skip-generate --schema prisma/schema.prisma', {
+  const pushCmd = external
+    ? 'npx prisma db push --skip-generate --force-reset --accept-data-loss --schema prisma/schema.prisma'
+    : 'npx prisma db push --skip-generate --schema prisma/schema.prisma'
+  execSync(pushCmd, {
     cwd: process.cwd(),
     stdio: 'inherit',
   })
