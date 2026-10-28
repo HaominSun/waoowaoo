@@ -37,6 +37,9 @@ describe('billing/service integration', () => {
 
     expect(result?.billable).toBe(true)
     expect((result as TaskBillingInfo & { status: string }).status).toBe('skipped')
+    expect(await prisma.creditLedgerEntry.count()).toBe(0)
+    expect(await prisma.creditAccount.count()).toBe(0)
+    expect(await prisma.quotaAllocationLog.count()).toBe(0)
   })
 
   it('records shadow audit in SHADOW mode and does not consume balance', async () => {
@@ -72,6 +75,11 @@ describe('billing/service integration', () => {
     expect(balance?.balance).toBeCloseTo(10, 8)
     expect(balance?.totalSpent).toBeCloseTo(0, 8)
     expect(await prisma.balanceTransaction.count({ where: { type: 'shadow_consume' } })).toBe(1)
+    expect(await prisma.creditLedgerEntry.count({ where: { taskId } })).toBe(1)
+    const ledger = await prisma.creditLedgerEntry.findUnique({ where: { taskId } })
+    expect(ledger?.status).toBe('settled')
+    expect(ledger?.userId).toBe(user.id)
+    expect(Number(ledger?.actualAmount)).toBeGreaterThan(0)
   })
 
   it('freezes and settles in ENFORCE mode with actual usage', async () => {
@@ -107,6 +115,7 @@ describe('billing/service integration', () => {
     const balance = await prisma.userBalance.findUnique({ where: { userId: user.id } })
     expect(balance?.totalSpent).toBeCloseTo(calcVoice(2), 8)
     expect(balance?.frozenAmount).toBeCloseTo(0, 8)
+    expect(await prisma.creditLedgerEntry.count()).toBe(0)
   })
 
   it('rolls back frozen billing in ENFORCE mode', async () => {

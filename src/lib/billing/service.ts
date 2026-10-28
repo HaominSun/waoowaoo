@@ -33,6 +33,7 @@ import {
 import { recordUsageCostOnly } from './reporting'
 import type { ApiType, UsageUnit } from './cost'
 import { getBillingMode } from './mode'
+import { recordShadowCreditLedger } from './credit-ledger'
 import { BillingOperationError, InsufficientBalanceError } from './errors'
 import { roundMoney } from './money'
 import { withTextUsageCollection, type TextUsageEntry } from './runtime-usage'
@@ -914,6 +915,20 @@ export async function prepareTaskBilling(task: {
   if (mode === 'SHADOW') {
     next.status = 'quoted'
     next.maxFrozenCost = quotedCost
+    // Shadow ledger only. ENFORCE still freezes below and does not write this table.
+    await recordShadowCreditLedger({
+      mode,
+      phase: 'prepare',
+      taskId: task.id,
+      userId: task.userId,
+      projectId: task.projectId,
+      organizationId: next.organizationId ?? null,
+      operationType: info.apiType,
+      quantity: info.quantity,
+      estimatedAmount: quotedCost,
+      planCreditPortion: next.planCreditApplied ?? 0,
+      balancePortion: next.balanceChargeApplied ?? quotedCost,
+    })
     return next
   }
 
@@ -1086,6 +1101,20 @@ export async function settleTaskBilling(task: {
         pricingVersion: info.pricingVersion || BUILTIN_PRICING_VERSION,
         pricingSelections: info.metadata || {},
       },
+    })
+    await recordShadowCreditLedger({
+      mode: 'SHADOW',
+      phase: 'settle',
+      taskId: task.id,
+      userId: task.userId,
+      projectId: task.projectId,
+      organizationId: info.organizationId ?? null,
+      operationType: info.apiType,
+      quantity: actual.actualQuantity,
+      estimatedAmount: quotedCost,
+      actualAmount: actual.actualCost,
+      planCreditPortion: info.planCreditApplied || 0,
+      balancePortion: info.balanceChargeApplied ?? actual.actualCost,
     })
     return {
       ...info,
@@ -1297,6 +1326,18 @@ export async function rollbackTaskBilling(task: {
 }) {
   const info = task.billingInfo
   if (!info || !info.billable) return info
+  if (info.modeSnapshot === 'SHADOW') {
+    await recordShadowCreditLedger({
+      mode: 'SHADOW',
+      phase: 'rollback',
+      taskId: task.id,
+      organizationId: info.organizationId ?? null,
+      operationType: info.apiType,
+      quantity: info.quantity,
+      estimatedAmount: info.maxFrozenCost,
+    })
+    return info
+  }
   if (!info.freezeId) return info
   if (info.modeSnapshot !== 'ENFORCE') return info
 

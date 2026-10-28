@@ -146,6 +146,7 @@ export async function recordUsageCostOnly(
   }
 
   if (params.organizationId && params.cost > 0) {
+    // quotaUsed only increases. It is not the member cap; checkMemberQuota is.
     await txOrPrisma.organizationMember.updateMany({
       where: { organizationId: params.organizationId, userId: params.userId },
       data: { quotaUsed: { increment: params.cost } },

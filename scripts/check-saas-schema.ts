@@ -32,6 +32,11 @@ const REQUIRED_TABLES = [
   'billing_invoices',
   'organization_invitations',
   'enterprise_audit_logs',
+  'credit_accounts',
+  'quota_allocation_logs',
+  'credit_ledger_entries',
+  'organization_member_quota_zero_backup',
+  'billing_data_migration_markers',
 ] as const
 
 const REQUIRED_COLUMNS: ColumnCheck[] = [
@@ -42,6 +47,7 @@ const REQUIRED_COLUMNS: ColumnCheck[] = [
   { table: 'organizations', column: 'currentPlanId' },
   { table: 'organizations', column: 'currentSubscriptionId' },
   { table: 'organization_members', column: 'quotaUsed' },
+  { table: 'organization_balances', column: 'arrears' },
   { table: 'organization_members', column: 'updatedAt' },
   { table: 'organization_usages', column: 'planCreditAmount' },
   { table: 'organization_usages', column: 'balanceAmount' },

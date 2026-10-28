@@ -106,7 +106,7 @@ export const POST = apiHandler<{ id: string }>(async (req, ctx) => {
       }
 
       const membership = await tx.organizationMember.create({
-        data: { organizationId, userId, role: 'admin', status: 'active', quota: 0 },
+        data: { organizationId, userId, role: 'admin', status: 'active', quota: null },
       })
       return { membership, previousRole: null }
     })

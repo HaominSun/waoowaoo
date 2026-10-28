@@ -1,6 +1,9 @@
 import { prisma } from './prisma'
 
 export async function resetBillingState() {
+  await prisma.creditLedgerEntry.deleteMany()
+  await prisma.quotaAllocationLog.deleteMany()
+  await prisma.creditAccount.deleteMany()
   await prisma.balanceTransaction.deleteMany()
   await prisma.balanceFreeze.deleteMany()
   await prisma.usageCost.deleteMany()
@@ -45,6 +48,9 @@ export async function resetNovelPromotionState() {
 }
 
 export async function resetSystemState() {
+  await prisma.creditLedgerEntry.deleteMany()
+  await prisma.quotaAllocationLog.deleteMany()
+  await prisma.creditAccount.deleteMany()
   await resetTaskState()
   await resetAssetHubState()
   await resetNovelPromotionState()

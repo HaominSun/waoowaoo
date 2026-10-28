@@ -64,7 +64,7 @@ export const POST = apiHandler(async (req) => {
           organizationId: org.id,
           userId: session.user.id,
           role: 'owner',
-          quota: 0,
+          quota: null,
           status: 'active',
         },
       })

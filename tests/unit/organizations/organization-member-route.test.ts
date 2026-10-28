@@ -94,7 +94,7 @@ describe('organization member management routes', () => {
     expect(response.status).toBe(201)
     expect(permissionMock.requireOrganizationRole).toHaveBeenCalledWith('org-1', 'admin-1', ['owner', 'admin'])
     expect(prismaMock.organizationMember.create).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({ organizationId: 'org-1', userId: 'member-2', role: 'member' }),
+      data: expect.objectContaining({ organizationId: 'org-1', userId: 'member-2', role: 'member', quota: null }),
     }))
   })
 
@@ -111,7 +111,7 @@ describe('organization member management routes', () => {
     expect(response.status).toBe(201)
     expect(prismaMock.user.findFirst).toHaveBeenCalledWith({ where: { name: '13800138000' } })
     expect(prismaMock.organizationMember.create).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({ userId: 'member-2' }),
+      data: expect.objectContaining({ userId: 'member-2', quota: null }),
     }))
   })
 
