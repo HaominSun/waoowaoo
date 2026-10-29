@@ -532,13 +532,92 @@ describe('Organization Billing Core Functions', () => {
     it('should return quota info when quota is sufficient', async () => {
       mockPrisma.organizationMember.findUnique.mockResolvedValue({
         quota: 1000,
+        quotaUsed: 999,
         status: 'active'
+      })
+      mockPrisma.organizationUsage.aggregate.mockImplementation(async (args: { where?: { type?: string } }) => {
+        if (args.where?.type === 'freeze') {
+          return { _sum: { amount: 5, planCreditAmount: 4, balanceAmount: 6 } }
+        }
+        return { _sum: { amount: 30 } }
       })
 
       const result = await checkMemberQuota('org-1', 'user-1')
-      
-      expect(result).toBeDefined()
+
       expect(result.quota).toBe(1000)
+      expect(result.frozen).toBe(10)
+      expect(result.used).toBe(40)
+      expect(result.remaining).toBe(960)
+      expect(result.hasQuota).toBe(true)
+      expect(mockPrisma.organizationUsage.aggregate).toHaveBeenCalledWith(expect.objectContaining({
+        where: expect.objectContaining({
+          organizationId: 'org-1',
+          userId: 'user-1',
+          type: 'freeze',
+          metadata: { path: '$.status', equals: 'pending' },
+        }),
+      }))
+    })
+
+    it('treats null as unlimited and ignores the legacy quotaUsed counter', async () => {
+      mockPrisma.organizationMember.findUnique.mockResolvedValue({
+        quota: null,
+        quotaUsed: 500,
+      })
+      mockPrisma.organizationUsage.aggregate.mockImplementation(async (args: { where?: { type?: string } }) => {
+        if (args.where?.type === 'freeze') return { _sum: { amount: 2, planCreditAmount: 0, balanceAmount: 0 } }
+        return { _sum: { amount: 3 } }
+      })
+
+      const result = await checkMemberQuota('org-1', 'user-1')
+
+      expect(result).toEqual({
+        hasQuota: true,
+        quota: null,
+        used: 5,
+        remaining: null,
+        frozen: 2,
+      })
+    })
+
+    it('treats 0 as forbidden even when nothing has been used', async () => {
+      mockPrisma.organizationMember.findUnique.mockResolvedValue({ quota: 0, quotaUsed: 0 })
+      mockPrisma.organizationUsage.aggregate.mockResolvedValue({ _sum: { amount: 0, planCreditAmount: 0, balanceAmount: 0 } })
+
+      const result = await checkMemberQuota('org-1', 'user-1')
+
+      expect(result.hasQuota).toBe(false)
+      expect(result.quota).toBe(0)
+      expect(result.remaining).toBe(0)
+    })
+
+    it('uses an explicit period window when one is provided', async () => {
+      const periodStart = new Date('2026-09-01T00:00:00.000Z')
+      const periodEnd = new Date('2026-10-01T00:00:00.000Z')
+      mockPrisma.organizationMember.findUnique.mockResolvedValue({ quota: null })
+      mockPrisma.organizationUsage.aggregate.mockResolvedValue({ _sum: { amount: 0 } })
+
+      await checkMemberQuota('org-1', 'user-1', { periodStart, periodEnd })
+
+      expect(mockPrisma.organizationUsage.aggregate).toHaveBeenCalledWith(expect.objectContaining({
+        where: expect.objectContaining({
+          createdAt: { gte: periodStart, lte: periodEnd },
+        }),
+      }))
+    })
+
+    it('reports no remaining quota when settled and frozen holds meet the cap', async () => {
+      mockPrisma.organizationMember.findUnique.mockResolvedValue({ quota: 40, quotaUsed: 0 })
+      mockPrisma.organizationUsage.aggregate.mockImplementation(async (args: { where?: { type?: string } }) => {
+        if (args.where?.type === 'freeze') return { _sum: { planCreditAmount: 10, balanceAmount: 5, amount: 5 } }
+        return { _sum: { amount: 30 } }
+      })
+
+      const result = await checkMemberQuota('org-1', 'user-1')
+
+      expect(result.used).toBe(45)
+      expect(result.remaining).toBe(0)
+      expect(result.hasQuota).toBe(false)
     })
   })
 

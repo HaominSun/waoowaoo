@@ -38,6 +38,10 @@ export default defineConfig({
         'src/lib/billing/runtime-usage.ts',
         'src/lib/billing/service.ts',
         'src/lib/billing/ledger.ts',
+        'src/lib/billing/credit-quota.ts',
+        'src/lib/billing/credit-ledger.ts',
+        'src/lib/billing/charge-attribution.ts',
+        'src/lib/billing/quota-migration.ts',
       ],
       thresholds: {
         branches: 80,

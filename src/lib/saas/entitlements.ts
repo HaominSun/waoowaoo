@@ -180,6 +180,8 @@ export async function assertOrganizationCanConsume(
       taskType,
     })
   }
+  // Legacy live gate. 0 and null are unlimited here. null = unlimited / 0 = forbidden
+  // lives in checkMemberQuota and planTieredDeduction and is not wired into this path.
   const memberQuota = Number(membership.quota || 0)
   const monthStart = new Date()
   monthStart.setDate(1)

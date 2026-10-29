@@ -94,7 +94,7 @@ export const POST = apiHandler(async (req, ctx) => {
         organizationId,
         userId: invitee.id,
         role,
-        quota: 0,
+        quota: null,
         status: 'active',
       },
       include: {

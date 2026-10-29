@@ -58,7 +58,7 @@ export const POST = apiHandler<{ id: string }>(async (req, { params }) => {
       organizationId,
       userId,
       role,
-      quota: 0,
+      quota: null,
       status: 'active',
     },
     include: {

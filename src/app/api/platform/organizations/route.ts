@@ -180,6 +180,7 @@ export const POST = apiHandler(async (req) => {
         userId: effectiveOwnerId,
         role: 'owner',
         status: 'active',
+        quota: null,
       },
     })
 

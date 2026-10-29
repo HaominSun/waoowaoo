@@ -33,11 +33,16 @@ const reportingMock = vi.hoisted(() => ({
   recordUsageCostOnly: vi.fn(),
 }))
 
+const creditLedgerMock = vi.hoisted(() => ({
+  recordShadowCreditLedger: vi.fn(),
+}))
+
 vi.mock('@/lib/billing/ledger', () => ledgerMock)
 vi.mock('@/lib/billing/mode', () => modeMock)
 vi.mock('@/lib/saas/entitlements', () => entitlementsMock)
 vi.mock('@/lib/billing/organization', () => organizationBillingMock)
 vi.mock('@/lib/billing/reporting', () => reportingMock)
+vi.mock('@/lib/billing/credit-ledger', () => creditLedgerMock)
 
 import { BillingOperationError, InsufficientBalanceError } from '@/lib/billing/errors'
 import {
@@ -73,6 +78,7 @@ describe('billing/service', () => {
     organizationBillingMock.increaseOrganizationPendingFreezeAmount.mockResolvedValue(true)
     organizationBillingMock.rollbackOrganizationFreeze.mockResolvedValue(true)
     reportingMock.recordUsageCostOnly.mockResolvedValue(undefined)
+    creditLedgerMock.recordShadowCreditLedger.mockResolvedValue(undefined)
   })
 
   it('returns raw execution result in OFF mode', async () => {
@@ -322,6 +328,12 @@ describe('billing/service', () => {
       const enforceInfo = enforce as Extract<TaskBillingInfo, { billable: true }>
       expect(enforceInfo.status).toBe('frozen')
       expect(enforceInfo.freezeId).toBe('freeze_task_1')
+      expect(creditLedgerMock.recordShadowCreditLedger).toHaveBeenCalledTimes(1)
+      expect(creditLedgerMock.recordShadowCreditLedger).toHaveBeenCalledWith(expect.objectContaining({
+        mode: 'SHADOW',
+        phase: 'prepare',
+        taskId: 'task_shadow',
+      }))
     })
 
     it('prepareTaskBilling tolerates unknown text model pricing in SHADOW mode', async () => {
@@ -346,6 +358,7 @@ describe('billing/service', () => {
       const shadowInfo = shadow as Extract<TaskBillingInfo, { billable: true }>
       expect(shadowInfo.status).toBe('skipped')
       expect(shadowInfo.maxFrozenCost).toBe(0)
+      expect(creditLedgerMock.recordShadowCreditLedger).not.toHaveBeenCalled()
     })
 
     it('prepareTaskBilling throws InsufficientBalanceError when ENFORCE freeze fails', async () => {
@@ -393,6 +406,75 @@ describe('billing/service', () => {
         }),
       )
       expect(ledgerMock.freezeBalance).not.toHaveBeenCalled()
+      expect(creditLedgerMock.recordShadowCreditLedger).not.toHaveBeenCalled()
+    })
+
+    it('prepareTaskBilling quotes organization tasks in SHADOW without freezing or moving balance', async () => {
+      modeMock.getBillingMode.mockResolvedValue('SHADOW')
+      entitlementsMock.assertOrganizationCanConsume.mockResolvedValue({
+        organizationId: 'org_1',
+        planCreditApplied: 4,
+        balanceChargeApplied: 6,
+      })
+
+      const prepared = await prepareTaskBilling({
+        id: 'task_org_shadow',
+        userId: 'u1',
+        projectId: 'project_org',
+        billingInfo: buildTaskInfo({ maxFrozenCost: 10 }),
+      })
+
+      const info = prepared as Extract<TaskBillingInfo, { billable: true }>
+      expect(info.status).toBe('quoted')
+      expect(info.organizationId).toBe('org_1')
+      expect(organizationBillingMock.freezeOrganizationBalance).not.toHaveBeenCalled()
+      expect(ledgerMock.freezeBalance).not.toHaveBeenCalled()
+      expect(creditLedgerMock.recordShadowCreditLedger).toHaveBeenCalledWith(expect.objectContaining({
+        mode: 'SHADOW',
+        phase: 'prepare',
+        taskId: 'task_org_shadow',
+        organizationId: 'org_1',
+        estimatedAmount: 10,
+        planCreditPortion: 4,
+        balancePortion: 6,
+      }))
+    })
+
+    it.each([
+      {
+        name: 'no balance charge',
+        policy: { organizationId: 'org_1', planCreditApplied: 10, balanceChargeApplied: 0 },
+        planCreditPortion: 10,
+        balancePortion: 0,
+      },
+      {
+        name: 'partial plan with the balance charge omitted',
+        policy: { organizationId: 'org_1', planCreditApplied: 4 },
+        planCreditPortion: 4,
+        balancePortion: 6,
+      },
+      {
+        name: 'full balance charge',
+        policy: { organizationId: 'org_1', planCreditApplied: 0, balanceChargeApplied: 10 },
+        planCreditPortion: 0,
+        balancePortion: 10,
+      },
+    ])('prepareTaskBilling shadow portions stay inside the quote for $name', async ({ policy, planCreditPortion, balancePortion }) => {
+      modeMock.getBillingMode.mockResolvedValue('SHADOW')
+      entitlementsMock.assertOrganizationCanConsume.mockResolvedValue(policy)
+
+      await prepareTaskBilling({
+        id: 'task_portion_shadow',
+        userId: 'u1',
+        projectId: 'project_org',
+        billingInfo: buildTaskInfo({ maxFrozenCost: 10 }),
+      })
+
+      expect(creditLedgerMock.recordShadowCreditLedger).toHaveBeenCalledWith(expect.objectContaining({
+        estimatedAmount: 10,
+        planCreditPortion,
+        balancePortion,
+      }))
     })
 
     it('prepareTaskBilling creates a zero-balance organization reservation when plan credit covers the estimate', async () => {
@@ -438,6 +520,20 @@ describe('billing/service', () => {
       expect(shadowInfo.status).toBe('settled')
       expect(shadowInfo.chargedCost).toBe(0)
       expect(ledgerMock.recordShadowUsage).toHaveBeenCalled()
+      expect(creditLedgerMock.recordShadowCreditLedger).toHaveBeenCalledTimes(1)
+      expect(creditLedgerMock.recordShadowCreditLedger).toHaveBeenCalledWith(expect.objectContaining({
+        mode: 'SHADOW',
+        phase: 'settle',
+        taskId: 'task_shadow_settle',
+        planCreditPortion: 0,
+        balancePortion: expect.any(Number),
+      }))
+      const settledCall = creditLedgerMock.recordShadowCreditLedger.mock.calls.at(-1)?.[0] as {
+        actualAmount: number
+        planCreditPortion: number
+        balancePortion: number
+      }
+      expect(settledCall.planCreditPortion + settledCall.balancePortion).toBeCloseTo(settledCall.actualAmount, 6)
 
       const offSettled = await settleTaskBilling({
         id: 'task_off_settle',
@@ -448,6 +544,31 @@ describe('billing/service', () => {
       const offInfo = offSettled as Extract<TaskBillingInfo, { billable: true }>
       expect(offInfo.status).toBe('settled')
       expect(offInfo.chargedCost).toBe(0)
+      expect(creditLedgerMock.recordShadowCreditLedger).toHaveBeenCalledTimes(1)
+      expect(creditLedgerMock.recordShadowCreditLedger).toHaveBeenCalledWith(expect.objectContaining({
+        taskId: 'task_shadow_settle',
+      }))
+    })
+
+    it('settleTaskBilling keeps shadow portions inside the actual cost when plan credit is partial', async () => {
+      const settled = await settleTaskBilling({
+        id: 'task_shadow_partial',
+        userId: 'u1',
+        projectId: 'p1',
+        billingInfo: buildTaskInfo({
+          modeSnapshot: 'SHADOW',
+          status: 'quoted',
+          maxFrozenCost: 10,
+          planCreditApplied: 4,
+        }),
+      })
+      expect((settled as Extract<TaskBillingInfo, { billable: true }>).chargedCost).toBe(0)
+      expect(creditLedgerMock.recordShadowCreditLedger).toHaveBeenCalledWith(expect.objectContaining({
+        phase: 'settle',
+        actualAmount: 10,
+        planCreditPortion: 4,
+        balancePortion: 6,
+      }))
     })
 
     it('settleTaskBilling does not fail OFF snapshot when text usage model pricing is unknown', async () => {
@@ -751,6 +872,7 @@ describe('billing/service', () => {
       expect((settled as Extract<TaskBillingInfo, { billable: true }>).chargedCost).toBeCloseTo(quoted, 8)
       const recordParams = ledgerMock.confirmChargeWithRecord.mock.calls.at(-1)?.[1] as { model: string }
       expect(recordParams.model).toBe('openai/gpt-5')
+      expect(creditLedgerMock.recordShadowCreditLedger).not.toHaveBeenCalled()
     })
 
     it('rollbackTaskBilling handles success and fallback branches', async () => {
@@ -759,6 +881,7 @@ describe('billing/service', () => {
         billingInfo: buildTaskInfo({ modeSnapshot: 'ENFORCE', freezeId: 'freeze_rb_ok' }),
       })
       expect((rolledBack as Extract<TaskBillingInfo, { billable: true }>).status).toBe('rolled_back')
+      expect(creditLedgerMock.recordShadowCreditLedger).not.toHaveBeenCalled()
 
       ledgerMock.rollbackFreeze.mockRejectedValueOnce(new Error('rollback failed'))
       const rollbackFailed = await rollbackTaskBilling({
@@ -782,6 +905,23 @@ describe('billing/service', () => {
       expect((rolledBack as Extract<TaskBillingInfo, { billable: true }>).status).toBe('rolled_back')
       expect(organizationBillingMock.rollbackOrganizationFreeze).toHaveBeenCalledWith('org_freeze_rb_ok')
       expect(ledgerMock.rollbackFreeze).not.toHaveBeenCalled()
+    })
+
+    it('rollbackTaskBilling records a shadow ledger row without moving a balance', async () => {
+      const info = buildTaskInfo({ modeSnapshot: 'SHADOW', status: 'quoted' })
+      const rolled = await rollbackTaskBilling({
+        id: 'task_shadow_rb',
+        billingInfo: info,
+      })
+
+      expect(rolled).toMatchObject({ status: 'quoted', modeSnapshot: 'SHADOW' })
+      expect(creditLedgerMock.recordShadowCreditLedger).toHaveBeenCalledWith(expect.objectContaining({
+        mode: 'SHADOW',
+        phase: 'rollback',
+        taskId: 'task_shadow_rb',
+      }))
+      expect(ledgerMock.rollbackFreeze).not.toHaveBeenCalled()
+      expect(organizationBillingMock.rollbackOrganizationFreeze).not.toHaveBeenCalled()
     })
   })
 })

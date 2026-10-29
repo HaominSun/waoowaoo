@@ -10,6 +10,7 @@ import type { Prisma } from '@prisma/client'
 import { recordUsageCostOnly } from './reporting'
 import type { ApiType, UsageUnit } from './cost'
 import { BillingOperationError } from './errors'
+import { calendarMonthStart, evaluateMemberQuota, frozenHoldAmount, readStoredQuota, type MemberQuotaSnapshot } from './credit-quota'
 
 const MONEY_SCALE = 6
 
@@ -344,6 +345,7 @@ export async function freezeOrganizationBalance(
       monthStart.setDate(1)
       monthStart.setHours(0, 0, 0, 0)
       const estimatedCost = normalizeMoney(Number(options?.estimatedCost || normalizedAmount + normalizedPlanCredit))
+      // Legacy: quota 0 is unlimited here because the value is falsy. 0 = forbidden is not wired yet.
       if (options?.memberQuota && options.userId) {
         const memberUsage = await tx.organizationUsage.aggregate({
           where: {
@@ -792,6 +794,7 @@ export async function getOrganizationMemberQuota(organizationId: string, userId:
     userId: member.userId,
     organizationId: member.organizationId,
     role: member.role,
+    // Legacy reader: null and 0 both surface as 0. Cap decisions use checkMemberQuota.
     quota: toMoneyNumber(member.quota || 0),
     status: member.status,
     joinedAt: member.joinedAt,
@@ -799,9 +802,16 @@ export async function getOrganizationMemberQuota(organizationId: string, userId:
 }
 
 /**
- * 检查成员是否有可用配额
+ * Member cap for the period. null quota is unlimited and 0 is forbidden.
+ * Used includes settled task rows and pending freezes. quotaUsed is not read.
+ * The default window is the calendar month until period policy is decided.
+ * Pass periodStart/periodEnd to line this up with a CreditAccount later.
  */
-export async function checkMemberQuota(organizationId: string, userId: string): Promise<{ hasQuota: boolean; quota: number; used: number; remaining: number }> {
+export async function checkMemberQuota(
+  organizationId: string,
+  userId: string,
+  options?: { periodStart?: Date; periodEnd?: Date },
+): Promise<MemberQuotaSnapshot> {
   const member = await prisma.organizationMember.findUnique({
     where: {
       organizationId_userId: {
@@ -812,36 +822,34 @@ export async function checkMemberQuota(organizationId: string, userId: string): 
   })
 
   if (!member) {
-    return { hasQuota: false, quota: 0, used: 0, remaining: 0 }
+    return { hasQuota: false, quota: 0, used: 0, remaining: 0, frozen: 0 }
   }
 
-  const quota = toMoneyNumber(member.quota || 0)
-  
-  // 计算已使用配额（当月消费）
-  const now = new Date()
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1)
-  
-  const usageResult = await prisma.organizationUsage.aggregate({
-    where: {
-      organizationId,
-      userId,
-      type: 'task',
-      createdAt: { gte: startOfMonth },
-    },
-    _sum: {
-      amount: true,
-    },
+  const periodStart = options?.periodStart ?? calendarMonthStart()
+  const createdAt: { gte: Date; lte?: Date } = { gte: periodStart }
+  if (options?.periodEnd) createdAt.lte = options.periodEnd
+  const usageWhere = { organizationId, userId, createdAt }
+
+  const [settled, frozen] = await Promise.all([
+    prisma.organizationUsage.aggregate({
+      where: { ...usageWhere, type: 'task' },
+      _sum: { amount: true },
+    }),
+    prisma.organizationUsage.aggregate({
+      where: {
+        ...usageWhere,
+        type: 'freeze',
+        metadata: { path: '$.status', equals: 'pending' },
+      },
+      _sum: { amount: true, planCreditAmount: true, balanceAmount: true },
+    }),
+  ])
+
+  return evaluateMemberQuota({
+    quota: readStoredQuota(member.quota),
+    settledAmount: toMoneyNumber(settled._sum.amount),
+    frozenAmount: frozenHoldAmount(frozen._sum),
   })
-
-  const used = toMoneyNumber(usageResult._sum.amount || 0)
-  const remaining = Math.max(0, quota - used)
-
-  return {
-    hasQuota: quota > 0,
-    quota,
-    used,
-    remaining,
-  }
 }
 
 /**

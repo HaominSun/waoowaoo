@@ -370,6 +370,7 @@ model Project {
   user                      User?                      @relation(fields: [userId], references: [id], onDelete: SetNull)
   organization              Organization?              @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   usageCosts                UsageCost[]
+  creditLedgerEntries       CreditLedgerEntry[]
   inspirationVideoWorkspace InspirationVideoWorkspace?
 
   @@index([userId])
@@ -494,6 +495,8 @@ model User {
   ownedOrganizations      Organization[]           @relation("OrganizationOwner")
   organizationInvitations OrganizationInvitation[] @relation("OrganizationInvitationInviter")
   enterpriseAuditLogs     EnterpriseAuditLog[]     @relation("EnterpriseAuditActor")
+  quotaAllocationLogs     QuotaAllocationLog[]     @relation("QuotaAllocationActor")
+  creditLedgerEntries     CreditLedgerEntry[]
 
   // 平台管理
   isPlatformAdmin Boolean         @default(false) // 平台管理员标识
@@ -548,19 +551,22 @@ model Organization {
   currentPlanId         String?
   currentSubscriptionId String?
 
-  owner              User                       @relation("OrganizationOwner", fields: [ownerId], references: [id])
-  members            OrganizationMember[]
-  balance            OrganizationBalance?
-  organizationUsages OrganizationUsage[]
-  projects           Project[]
-  tasks              Task[]
-  usageCosts         UsageCost[]
-  currentPlan        PricingPlan?               @relation(fields: [currentPlanId], references: [id], onDelete: SetNull)
-  subscriptions      OrganizationSubscription[]
-  orders             BillingOrder[]
-  invoices           BillingInvoice[]
-  invitations        OrganizationInvitation[]
-  auditLogs          EnterpriseAuditLog[]
+  owner               User                       @relation("OrganizationOwner", fields: [ownerId], references: [id])
+  members             OrganizationMember[]
+  balance             OrganizationBalance?
+  organizationUsages  OrganizationUsage[]
+  projects            Project[]
+  tasks               Task[]
+  usageCosts          UsageCost[]
+  currentPlan         PricingPlan?               @relation(fields: [currentPlanId], references: [id], onDelete: SetNull)
+  subscriptions       OrganizationSubscription[]
+  orders              BillingOrder[]
+  invoices            BillingInvoice[]
+  invitations         OrganizationInvitation[]
+  auditLogs           EnterpriseAuditLog[]
+  creditAccounts      CreditAccount[]
+  quotaAllocationLogs QuotaAllocationLog[]
+  creditLedgerEntries CreditLedgerEntry[]
 
   @@index([status])
   @@index([businessStatus])
@@ -574,14 +580,19 @@ model OrganizationMember {
   organizationId String
   userId         String
   role           String   @default("member") // owner, admin, member
-  quota          Decimal? @default(0) @db.Decimal(18, 6) // 月度配额，0表示无限制
+  // null = unlimited, 0 = forbidden. Legacy rows stored 0 for unlimited; migration
+  // 20261028170000_credit_quota_ledger copies those rows and sets them to null.
+  quota          Decimal? @db.Decimal(18, 6)
+  // Legacy counter. It only increments and never resets. Cap checks use checkMemberQuota.
   quotaUsed      Decimal  @default(0) @db.Decimal(18, 6)
   status         String   @default("active") // active, frozen
   joinedAt       DateTime @default(now())
   updatedAt      DateTime @default(now()) @updatedAt
 
-  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization        Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user                User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  creditAccounts      CreditAccount[]
+  quotaAllocationLogs QuotaAllocationLog[]
 
   @@unique([organizationId, userId])
   @@index([organizationId])
@@ -596,6 +607,10 @@ model OrganizationBalance {
   balance        Decimal  @default(0) @db.Decimal(18, 6)
   frozenAmount   Decimal  @default(0) @db.Decimal(18, 6)
   totalSpent     Decimal  @default(0) @db.Decimal(18, 6)
+  // Shortfall that could not be taken from balance. Live settle does not write this yet.
+  // planTieredDeduction returns the amount a later wiring step should add here.
+  // Balance itself must stay >= 0. An organization with arrears > 0 rejects new tasks.
+  arrears        Decimal  @default(0) @db.Decimal(18, 6)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @default(now()) @updatedAt
 
@@ -629,6 +644,121 @@ model OrganizationUsage {
   @@index([orderId])
   @@index([createdAt])
   @@map("organization_usages")
+}
+
+/// One billing-period credit bucket.
+/// scope=organization is the shared pool. scope=member is a soft cap.
+/// Member caps limit that member's usage and do not reserve funds from the pool.
+/// Amounts are CNY, same as the rest of billing. quotaAmount null = unlimited, 0 = forbidden.
+/// periodStart/periodEnd are generic: calendar month vs subscription anniversary is undecided.
+model CreditAccount {
+  id             String   @id @default(uuid())
+  organizationId String
+  scope          String // organization, member
+  memberId       String?
+  // MySQL unique indexes treat NULL as distinct, so the org pool cannot use a null holder.
+  // organization pool: "organization". Member cap: "member:<memberId>".
+  holderKey      String
+  periodStart    DateTime
+  periodEnd      DateTime
+  quotaAmount    Decimal? @db.Decimal(18, 6)
+  usedAmount     Decimal  @default(0) @db.Decimal(18, 6)
+  frozenAmount   Decimal  @default(0) @db.Decimal(18, 6)
+  currency       String   @default("CNY")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization        Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  member              OrganizationMember?  @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  quotaAllocationLogs QuotaAllocationLog[]
+
+  @@unique([organizationId, holderKey, periodStart, periodEnd], map: "credit_accounts_period_holder_key")
+  @@index([organizationId, periodStart])
+  @@index([memberId])
+  @@map("credit_accounts")
+}
+
+/// Audit row for every quota allocation change. null old/new values mean unlimited.
+model QuotaAllocationLog {
+  id              String   @id @default(uuid())
+  actorId         String?
+  organizationId  String
+  memberId        String?
+  creditAccountId String?
+  target          String // member_quota, pool_quota, member_cap
+  oldValue        Decimal? @db.Decimal(18, 6)
+  newValue        Decimal? @db.Decimal(18, 6)
+  reason          String   @db.Text
+  createdAt       DateTime @default(now())
+
+  actor         User?               @relation("QuotaAllocationActor", fields: [actorId], references: [id], onDelete: SetNull)
+  organization  Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  member        OrganizationMember? @relation(fields: [memberId], references: [id], onDelete: SetNull)
+  creditAccount CreditAccount?      @relation(fields: [creditAccountId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, createdAt])
+  @@index([memberId])
+  @@index([actorId])
+  @@index([creditAccountId])
+  @@map("quota_allocation_logs")
+}
+
+/// One row per task. Amounts are stored in CNY. Display credits = amount * credits_per_cny.
+/// status is frozen, settled, or rolled_back. SHADOW writes this row; ENFORCE does not yet.
+model CreditLedgerEntry {
+  id                String    @id @default(uuid())
+  taskId            String    @unique
+  operationType     String
+  quantity          Decimal   @db.Decimal(18, 6)
+  estimatedAmount   Decimal   @db.Decimal(18, 6)
+  actualAmount      Decimal?  @db.Decimal(18, 6)
+  planCreditPortion Decimal   @default(0) @db.Decimal(18, 6)
+  balancePortion    Decimal   @default(0) @db.Decimal(18, 6)
+  arrearsPortion    Decimal   @default(0) @db.Decimal(18, 6)
+  organizationId    String?
+  userId            String
+  projectId         String?
+  status            String
+  currency          String    @default("CNY")
+  frozenAt          DateTime?
+  settledAt         DateTime?
+  rolledBackAt      DateTime?
+  metadata          Json?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project      Project?      @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId])
+  @@index([userId])
+  @@index([projectId])
+  @@index([status])
+  @@map("credit_ledger_entries")
+}
+
+/// Rows whose OrganizationMember.quota was 0 before the unlimited/forbidden semantic change.
+/// Kept so the conversion can be rolled back. Not a live quota source.
+model OrganizationMemberQuotaBackup {
+  id             String   @id
+  memberId       String   @unique
+  organizationId String
+  userId         String
+  oldQuota       Decimal  @db.Decimal(18, 6)
+  backedUpAt     DateTime @default(now())
+
+  @@index([organizationId])
+  @@map("organization_member_quota_zero_backup")
+}
+
+/// One-shot data migrations. The quota 0 → null conversion refuses to run again once marked.
+model BillingDataMigrationMarker {
+  name      String   @id
+  appliedAt DateTime @default(now())
+  details   Json?
+
+  @@map("billing_data_migration_markers")
 }
 
 model PricingPlan {
