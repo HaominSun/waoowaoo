@@ -3,7 +3,7 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import mysql from 'mysql2/promise'
 import Redis from 'ioredis'
 import { loadTestEnv } from './env'
-import { runGlobalTeardown } from './global-teardown'
+import { isExternalTestServices, runGlobalTeardown } from './global-teardown'
 
 function parseDbUrl(dbUrl: string) {
   const url = new URL(dbUrl)
@@ -13,6 +13,37 @@ function parseDbUrl(dbUrl: string) {
     user: decodeURIComponent(url.username),
     password: decodeURIComponent(url.password),
     database: url.pathname.replace(/^\//, ''),
+  }
+}
+
+/**
+ * External mode runs `prisma db push --force-reset`, which wipes the database
+ * DATABASE_URL points at. Allow that only when the database name (URL path
+ * segment, query string ignored) ends with `_test`.
+ */
+function assertExternalTestDatabase(dbUrl: string | undefined) {
+  if (!dbUrl || !dbUrl.trim()) {
+    throw new Error(
+      'Refusing to force-reset: DATABASE_URL is missing. External test services only reset a database whose name ends with "_test".',
+    )
+  }
+
+  let database = ''
+  try {
+    const url = new URL(dbUrl)
+    const segment = url.pathname.replace(/^\/+/, '').split('/')[0] ?? ''
+    database = segment ? decodeURIComponent(segment) : ''
+  } catch {
+    throw new Error(
+      'Refusing to force-reset: DATABASE_URL could not be parsed. External test services only reset a database whose name ends with "_test".',
+    )
+  }
+
+  if (!database.endsWith('_test')) {
+    const shown = database || '(empty)'
+    throw new Error(
+      `Refusing to force-reset database "${shown}": database name must end with "_test". Point DATABASE_URL at a throwaway test database.`,
+    )
   }
 }
 
@@ -75,20 +106,33 @@ export default async function globalSetup() {
     return async () => {}
   }
 
-  execSync('docker compose -f docker-compose.test.yml down -v --remove-orphans', {
-    cwd: process.cwd(),
-    stdio: 'inherit',
-  })
+  // TEST_EXTERNAL_SERVICES=1: MySQL/Redis are provided externally (e.g. CI service
+  // containers or a local install). Skip docker compose entirely; only wait for
+  // DATABASE_URL / REDIS_HOST:REDIS_PORT, then reset schema+data ourselves
+  // (the docker path gets a clean DB from `down -v`).
+  const external = isExternalTestServices()
 
-  execSync('docker compose -f docker-compose.test.yml up -d --remove-orphans', {
-    cwd: process.cwd(),
-    stdio: 'inherit',
-  })
+  if (!external) {
+    execSync('docker compose -f docker-compose.test.yml down -v --remove-orphans', {
+      cwd: process.cwd(),
+      stdio: 'inherit',
+    })
+
+    execSync('docker compose -f docker-compose.test.yml up -d --remove-orphans', {
+      cwd: process.cwd(),
+      stdio: 'inherit',
+    })
+  } else {
+    assertExternalTestDatabase(process.env.DATABASE_URL)
+  }
 
   await waitForMysql()
   await waitForRedis()
 
-  execSync('npx prisma db push --skip-generate --schema prisma/schema.prisma', {
+  const pushCmd = external
+    ? 'npx prisma db push --skip-generate --force-reset --accept-data-loss --schema prisma/schema.prisma'
+    : 'npx prisma db push --skip-generate --schema prisma/schema.prisma'
+  execSync(pushCmd, {
     cwd: process.cwd(),
     stdio: 'inherit',
   })
