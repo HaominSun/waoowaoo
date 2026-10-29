@@ -845,4 +845,33 @@ describe('api contract - asset list cursor pagination', () => {
     expect(replay.status).toBe(400)
     expect(replay.body.error.message).toBe('Cursor does not match the current filters')
   })
+
+  it('returns a generic 500 when list cursor signing is unavailable', async () => {
+    const env = process.env as Record<string, string | undefined>
+    const previous = {
+      NODE_ENV: env.NODE_ENV,
+      NEXTAUTH_SECRET: env.NEXTAUTH_SECRET,
+      AUTH_SECRET: env.AUTH_SECRET,
+    }
+    env.NODE_ENV = 'staging'
+    delete env.NEXTAUTH_SECRET
+    delete env.AUTH_SECRET
+    try {
+      const assets = await assetsGet('scope=global&limit=1&cursor=abc')
+      const styles = await stylesGet('limit=1&cursor=abc')
+      for (const response of [assets, styles]) {
+        expect(response.status).toBe(500)
+        expect(response.body.error.code).toBe('INTERNAL_ERROR')
+        expect(response.body.error.message).toBe('Internal server error')
+        expect(response.text).not.toMatch(/NEXTAUTH_SECRET|AUTH_SECRET|NODE_ENV|staging/i)
+      }
+    } finally {
+      if (previous.NODE_ENV === undefined) delete env.NODE_ENV
+      else env.NODE_ENV = previous.NODE_ENV
+      if (previous.NEXTAUTH_SECRET === undefined) delete env.NEXTAUTH_SECRET
+      else env.NEXTAUTH_SECRET = previous.NEXTAUTH_SECRET
+      if (previous.AUTH_SECRET === undefined) delete env.AUTH_SECRET
+      else env.AUTH_SECRET = previous.AUTH_SECRET
+    }
+  })
 })

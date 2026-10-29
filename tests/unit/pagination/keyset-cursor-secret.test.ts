@@ -24,8 +24,9 @@ const previous = {
 
 const env = process.env as Record<string, string | undefined>
 
-function setEnv(input: { nodeEnv: string; nextAuth?: string; auth?: string }) {
-  env.NODE_ENV = input.nodeEnv
+function setEnv(input: { nodeEnv?: string; nextAuth?: string; auth?: string }) {
+  if (input.nodeEnv === undefined) delete env.NODE_ENV
+  else env.NODE_ENV = input.nodeEnv
   if (input.nextAuth === undefined) delete env.NEXTAUTH_SECRET
   else env.NEXTAUTH_SECRET = input.nextAuth
   if (input.auth === undefined) delete env.AUTH_SECRET
@@ -41,8 +42,8 @@ afterEach(() => {
 })
 
 describe('asset list cursor secret', () => {
-  it('throws in production when NEXTAUTH_SECRET and AUTH_SECRET are unset', () => {
-    setEnv({ nodeEnv: 'production' })
+  it.each(['production', 'staging', undefined])('throws when NODE_ENV is %s and no signing secret is configured', (nodeEnv) => {
+    setEnv({ nodeEnv })
     const createdAt = new Date('2024-01-01T00:00:00.000Z')
     expect(() => encodeListCursor({ createdAt, id: 'asset-1' }, filters)).toThrow(CursorSecretError)
     expect(() => decodeListCursor('not-a-cursor', filters)).toThrow(CursorSecretError)

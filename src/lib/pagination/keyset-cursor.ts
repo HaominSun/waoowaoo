@@ -1,5 +1,6 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 import { ApiError } from '@/lib/api-errors'
+import { logError as _ulogError } from '@/lib/logging/core'
 
 export const LIST_PAGE_DEFAULT_LIMIT = 24
 export const LIST_PAGE_MAX_LIMIT = 100
@@ -52,13 +53,12 @@ type CursorBody = {
 
 export class CursorSecretError extends Error {
   constructor() {
-    super('NEXTAUTH_SECRET or AUTH_SECRET is required to sign asset list cursors in production')
+    super('Internal server error')
     this.name = 'CursorSecretError'
   }
 }
 
-// Dev/test only. Production must set NEXTAUTH_SECRET or AUTH_SECRET; this value
-// changes on every process start and is never used when NODE_ENV=production.
+// Only NODE_ENV=development or NODE_ENV=test may use this. It changes every process start.
 const ephemeralCursorSecret = randomBytes(32).toString('hex')
 
 function configuredCursorSecret(): string | null {
@@ -66,11 +66,18 @@ function configuredCursorSecret(): string | null {
   return secret && secret.length > 0 ? secret : null
 }
 
+function allowsEphemeralCursorSecret(): boolean {
+  return process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'test'
+}
+
 function cursorSecret(): string {
   const secret = configuredCursorSecret()
   if (secret) return secret
-  if (process.env.NODE_ENV === 'production') throw new CursorSecretError()
-  return ephemeralCursorSecret
+  if (allowsEphemeralCursorSecret()) return ephemeralCursorSecret
+  _ulogError('[assets] list cursor signing secret is not configured; set NEXTAUTH_SECRET or AUTH_SECRET', {
+    nodeEnv: process.env.NODE_ENV ?? null,
+  })
+  throw new CursorSecretError()
 }
 
 export function normalizeSearchText(value: string | null | undefined): string | null {

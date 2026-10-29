@@ -90,7 +90,7 @@ npx prisma db push
 npm run dev
 ```
 
-> **Production:** set `NEXTAUTH_SECRET` (or `AUTH_SECRET`) before serving traffic. Asset hub list cursors are signed with it. If `NODE_ENV=production` and that secret is missing, issuing or verifying a cursor throws. Local development and tests can omit it.
+> **Deploy:** set `NEXTAUTH_SECRET` (or `AUTH_SECRET`) unless `NODE_ENV` is exactly `development` or `test`. Any other value, including unset or `staging`, throws when an asset-list cursor is issued or verified. The API responds with a generic 500.
 
 ---
 
