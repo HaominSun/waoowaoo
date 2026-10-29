@@ -1,6 +1,11 @@
 -- Tables and columns that reached schema.prisma through db push and were not
 -- covered by an earlier migration. Required so a fresh `prisma migrate deploy`
 -- matches the current datamodel before the credit-quota migration seeds config.
+-- Existing databases: do not blanket-mark this migration. Rehearse on a copy of
+-- production, then run `npx tsx scripts/migrate-baseline-check.ts`. It runs
+-- `migrate resolve --applied` only when admin_audit_logs, system_configs, and
+-- user.isPlatformAdmin / user.isGlobalLocked all exist and match this file.
+-- A partial or different structure exits non-zero.
 
 -- AlterTable
 ALTER TABLE `inspiration_video_creations` MODIFY `updatedAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3);
