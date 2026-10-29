@@ -121,7 +121,7 @@ npm run dev
 
 ***
 
-## Upgrading an existing database
+## 升级已有数据库
 
 已经建过表的数据库，在切换到 `migrate deploy` 之前，必须先遵循 [prisma/migrations/BOOTSTRAP.md](prisma/migrations/BOOTSTRAP.md)。请先在生产库的副本上演练，通过后再对生产环境执行。
 
