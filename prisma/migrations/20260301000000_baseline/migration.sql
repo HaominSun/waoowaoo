@@ -1,9 +1,9 @@
 -- Baseline schema from before 20260317120000_add_asset_kind_to_locations.
--- Fresh databases need this so `prisma migrate deploy` can replay the later incremental migrations.
--- Existing databases: do not blanket-mark this migration. Rehearse on a copy of
--- production, then run `npx tsx scripts/migrate-baseline-check.ts`. It runs
--- `migrate resolve --applied` only when every table this file creates is present
--- and its columns match. A partial or different structure exits non-zero.
+-- Fresh databases need this so `prisma migrate deploy` can replay later migrations.
+-- Existing db-push databases: see prisma/migrations/BOOTSTRAP.md. Rehearse on a
+-- copy of production. Do not mark this migration applied unless
+-- `scripts/migrate-baseline-check.ts` reports an empty diff against
+-- prisma/baseline/schema.pre-credit-quota.prisma.
 
 -- CreateTable
 CREATE TABLE `account` (

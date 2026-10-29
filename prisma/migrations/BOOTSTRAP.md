@@ -1,34 +1,40 @@
-# Existing databases
+# Existing databases (db push) before the credit-quota migration
 
-Rehearse on a copy of production first. Do not point these commands at production until that copy finishes `prisma migrate deploy` cleanly.
+Rehearse on a copy of production first. Do not point these commands at production until the copy succeeds.
 
-These three migrations exist so an empty database can replay history:
+`prisma db push` databases have an empty `_prisma_migrations` table. Running `prisma migrate deploy` there would replay every historical migration and fail. The credit-quota migration is `20261028170000_credit_quota_ledger`.
 
-- `20260301000000_baseline`
-- `20260625120000_create_organization_base`
-- `20261028160000_platform_admin_schema`
-
-An existing database may already contain some of their tables. Do not blanket-mark them with `prisma migrate resolve --applied`.
+The committed snapshot `prisma/baseline/schema.pre-credit-quota.prisma` is `prisma/schema.prisma` at the merge-base before that migration.
 
 1. Restore a copy of production and set `DATABASE_URL` to that copy.
-2. Preview. This only reads `information_schema`:
+2. Compare the copy to the snapshot:
+
+```bash
+npx prisma migrate diff \
+  --from-url "$DATABASE_URL" \
+  --to-schema-datamodel prisma/baseline/schema.pre-credit-quota.prisma \
+  --exit-code \
+  --script
+```
+
+3. Or run the checker, which does that diff:
 
 ```bash
 npx tsx scripts/migrate-baseline-check.ts --dry-run
 ```
 
-3. The checker judges each migration on its own:
+- Empty diff (exit 0): the checker may `prisma migrate resolve --applied` for **every** migration except `20261028170000_credit_quota_ledger`, including `20260301000000_baseline`, `20260625120000_create_organization_base`, and `20261028160000_platform_admin_schema`. `--dry-run` only prints those names and writes nothing.
+- Non-empty diff: the checker marks nothing, prints the diff, and exits non-zero. Repair the copy. Do not resolve migrations by hand.
 
-- Every table it creates is present, and the columns defined in that file match type and nullability: that migration alone may be marked applied. Extra columns from later migrations are allowed.
-- None of its tables or added columns are present: leave it for `prisma migrate deploy`.
-- Some tables exist, a declared column is missing, or a type or nullability differs: the checker prints the difference, marks nothing, and exits non-zero. Repair the copy or add a forward migration. Do not resolve that migration by hand.
-
-4. On the copy, run the checker without `--dry-run`, then:
+4. On the copy, run without `--dry-run`. The checker marks the historical migrations, then runs the same diff again and exits non-zero if that second diff is not empty.
 
 ```bash
+npx tsx scripts/migrate-baseline-check.ts
 npx prisma migrate deploy --schema prisma/schema.prisma
 ```
 
+`migrate deploy` then applies only `20261028170000_credit_quota_ledger`.
+
 5. Repeat on production only after the copy succeeds.
 
-`prisma migrate diff --from-url "$DATABASE_URL" --to-migrations prisma/migrations --shadow-database-url "$SHADOW_DATABASE_URL"` is a second look at history drift. It does not replace the per-migration check.
+If those historical migrations are already recorded in `_prisma_migrations`, the checker does nothing.

@@ -1,10 +1,9 @@
 -- Organization tables existed before 20260626120000_upgrade_saas_platform via db push.
 -- Create them here so `prisma migrate deploy` can replay that migration on an empty database.
--- Existing databases: do not blanket-mark this migration. Rehearse on a copy of
--- production, then run `npx tsx scripts/migrate-baseline-check.ts`. It runs
--- `migrate resolve --applied` only when organizations, organization_members,
--- organization_balances, and organization_usages all exist and match this file.
--- A partial or different structure exits non-zero.
+-- Existing db-push databases: see prisma/migrations/BOOTSTRAP.md. Rehearse on a
+-- copy of production. Do not mark this migration applied unless
+-- `scripts/migrate-baseline-check.ts` reports an empty diff against
+-- prisma/baseline/schema.pre-credit-quota.prisma.
 
 CREATE TABLE `organizations` (
     `id` VARCHAR(191) NOT NULL,
