@@ -1,0 +1,123 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main, feature/platform-admin]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+# GitHub-hosted runners default to UTC. tests/unit/projects/default-name.test.ts
+# formats 2026-03-29T18:56:42+08:00 with local Date getters and expects
+# "03-29 18:56", which only holds in Asia/Shanghai.
+env:
+  TZ: Asia/Shanghai
+
+jobs:
+  quick:
+    name: quick (lint / typecheck / guards / local tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TZ: Asia/Shanghai
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test guards
+        run: npm run test:guards
+
+      - name: Local tests
+        run: npm run test:local
+
+  integration:
+    name: integration (MySQL + Redis, non-blocking)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    continue-on-error: true
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: waoowaoo_test
+        ports:
+          - "3307:3306"
+        options: >-
+          --health-cmd "mysqladmin ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 20
+          --health-start-period 30s
+      redis:
+        image: redis:7-alpine
+        ports:
+          - "6380:6379"
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_EXTERNAL_SERVICES: "1"
+      DATABASE_URL: mysql://root:root@127.0.0.1:3307/waoowaoo_test
+      REDIS_HOST: 127.0.0.1
+      REDIS_PORT: "6380"
+      TZ: Asia/Shanghai
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Billing integration
+        run: npm run test:billing:integration
+
+      - name: Billing concurrency
+        if: ${{ !cancelled() }}
+        run: npm run test:billing:concurrency
+
+      - name: API integration
+        if: ${{ !cancelled() }}
+        run: npm run test:integration:api
+
+      - name: Task integration
+        if: ${{ !cancelled() }}
+        run: npm run test:integration:task
+
+      - name: System tests
+        if: ${{ !cancelled() }}
+        run: npm run test:system
+
+      - name: Regression cases
+        if: ${{ !cancelled() }}
+        run: npm run test:regression:cases
