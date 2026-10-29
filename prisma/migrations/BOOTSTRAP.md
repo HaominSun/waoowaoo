@@ -26,7 +26,9 @@ npx tsx scripts/migrate-baseline-check.ts --dry-run
 - Empty diff (exit 0): the checker may `prisma migrate resolve --applied` for **every** migration except `20261028170000_credit_quota_ledger`, including `20260301000000_baseline`, `20260625120000_create_organization_base`, and `20261028160000_platform_admin_schema`. `--dry-run` only prints those names and writes nothing.
 - Non-empty diff: the checker marks nothing, prints the diff, and exits non-zero. Repair the copy. Do not resolve migrations by hand.
 
-4. On the copy, run without `--dry-run`. The checker marks the historical migrations, then runs the same diff again and exits non-zero if that second diff is not empty.
+`prisma migrate diff` exit 1 is a tool or connection failure. Exit 2 means the database does not match the snapshot. The checker marks nothing in both cases and uses those exit codes itself. Only exit 0 continues.
+
+4. On the copy, run without `--dry-run`. The checker marks the historical migrations, then runs the same diff again.
 
 ```bash
 npx tsx scripts/migrate-baseline-check.ts
@@ -34,6 +36,15 @@ npx prisma migrate deploy --schema prisma/schema.prisma
 ```
 
 `migrate deploy` then applies only `20261028170000_credit_quota_ledger`.
+
+If that second diff is not empty (exit 2), or the diff command fails (exit 1), the rows for this run are already in `_prisma_migrations`. The checker prints each `migration_name` it inserted and a `DELETE` for those names only. Run that statement on the copy, fix the database, then run the checker again. Do not delete any other `_prisma_migrations` rows.
+
+```sql
+DELETE FROM `_prisma_migrations`
+WHERE `migration_name` IN (
+  -- names printed by scripts/migrate-baseline-check.ts
+);
+```
 
 5. Repeat on production only after the copy succeeds.
 

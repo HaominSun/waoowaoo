@@ -48,14 +48,40 @@ describe('migrate baseline check', () => {
     expect(() => assertDroppableTestDatabase('waoowaoo_migrate_test')).not.toThrow()
   })
 
-  it('does not call resolve and exits non-zero when the pre-#8 diff is not empty', () => {
+  it('does not call resolve and exits 2 when the pre-#8 diff is a schema mismatch', () => {
     const result = run({
       diff: () => ({ exitCode: 2, output: 'DROP INDEX `projects_userId_idx` ON `projects`;\n' }),
     })
-    expect(result.code).not.toBe(0)
+    expect(result.code).toBe(2)
     expect(result.resolved).toEqual([])
     expect(result.err).toContain('projects_userId_idx')
+    expect(result.err).toContain('exit 2')
     expect(result.err).toContain('Marked nothing')
+    expect(result.err).not.toContain('diff error')
+  })
+
+  it('exits 1 and marks nothing when prisma migrate diff itself fails', () => {
+    const result = run({
+      diff: () => ({ exitCode: 1, output: 'Error: P1001 Can\'t reach database server\n' }),
+    })
+    expect(result.code).toBe(1)
+    expect(result.resolved).toEqual([])
+    expect(result.err).toContain('P1001')
+    expect(result.err).toContain('exit 1')
+    expect(result.err).toContain('diff error, not a schema mismatch')
+    expect(result.err).toContain('Marked nothing')
+  })
+
+  it('marks only the historical migrations that are not already recorded', () => {
+    const result = run({
+      applied: new Set(['20260301000000_baseline']),
+    })
+    expect(result.code).toBe(0)
+    expect(result.resolved).toEqual([
+      '20260625120000_create_organization_base',
+      '20261028160000_platform_admin_schema',
+    ])
+    expect(result.resolved).not.toContain(CREDIT_QUOTA_MIGRATION)
   })
 
   it('dry-run writes nothing when the diff is empty', () => {
@@ -97,8 +123,13 @@ describe('migrate baseline check', () => {
     const result = run({
       diff: () => calls.shift() ?? emptyDiff(),
     })
-    expect(result.code).not.toBe(0)
+    expect(result.code).toBe(2)
     expect(result.resolved).toEqual(historicalMigrations(migrations))
-    expect(result.err).toContain('Post-mark migrate diff is not empty.')
+    expect(result.err).toContain('Post-mark migrate diff is not empty (exit 2).')
+    expect(result.err).toContain('DELETE FROM `_prisma_migrations`')
+    for (const name of historicalMigrations(migrations)) {
+      expect(result.err).toContain(`'${name}'`)
+    }
+    expect(result.err).not.toContain(`'${CREDIT_QUOTA_MIGRATION}'`)
   })
 })

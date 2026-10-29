@@ -88,10 +88,16 @@ export function runBaselineCheck(deps: BaselineCheckDeps): number {
   }
 
   const first = deps.diff()
-  if (!diffIsEmpty(first)) {
+  const firstKind = classifyDiff(first)
+  if (firstKind === 'error') {
     deps.stderr(first.output)
-    deps.stderr('Live database does not match prisma/baseline/schema.pre-credit-quota.prisma. Marked nothing.\n')
+    deps.stderr(`prisma migrate diff failed with exit ${first.exitCode}. This is a diff error, not a schema mismatch. Marked nothing.\n`)
     return 1
+  }
+  if (firstKind === 'mismatch') {
+    deps.stderr(first.output)
+    deps.stderr('Live database does not match prisma/baseline/schema.pre-credit-quota.prisma (migrate diff exit 2). Marked nothing.\n')
+    return 2
   }
 
   if (deps.dryRun) {
@@ -106,17 +112,37 @@ export function runBaselineCheck(deps: BaselineCheckDeps): number {
   }
 
   const second = deps.diff()
-  if (!diffIsEmpty(second)) {
+  const secondKind = classifyDiff(second)
+  if (secondKind !== 'empty') {
     deps.stderr(second.output)
-    deps.stderr('Post-mark migrate diff is not empty.\n')
-    return 1
+    if (secondKind === 'error') {
+      deps.stderr(`Post-mark prisma migrate diff failed with exit ${second.exitCode}. This is a diff error, not a schema mismatch.\n`)
+    } else {
+      deps.stderr('Post-mark migrate diff is not empty (exit 2).\n')
+    }
+    deps.stderr(`${recoveryInstructions(pending)}\n`)
+    return secondKind === 'mismatch' ? 2 : 1
   }
   deps.stdout(`Marked ${pending.length} migrations applied. prisma migrate deploy will run only ${CREDIT_QUOTA_MIGRATION}.\n`)
   return 0
 }
 
-function diffIsEmpty(result: DiffResult): boolean {
-  return result.exitCode === 0
+function classifyDiff(result: DiffResult): 'empty' | 'mismatch' | 'error' {
+  if (result.exitCode === 0) return 'empty'
+  if (result.exitCode === 2) return 'mismatch'
+  return 'error'
+}
+
+export function recoveryInstructions(migrationNames: string[]): string {
+  const quoted = migrationNames.map((name) => `  '${name}'`).join(',\n')
+  return [
+    'This run already inserted these _prisma_migrations rows. Delete only these rows, then fix the copy before retrying:',
+    'DELETE FROM `_prisma_migrations`',
+    'WHERE `migration_name` IN (',
+    quoted,
+    ');',
+    'See prisma/migrations/BOOTSTRAP.md.',
+  ].join('\n')
 }
 
 function databaseName(dbUrl: string): string {
