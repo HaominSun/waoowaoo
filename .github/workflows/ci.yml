@@ -80,6 +80,25 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 10
+      # minio/minio is no longer anonymously pullable (Docker Hub denies it;
+      # quay.io/minio/minio returns 401). GitHub service containers also cannot
+      # pass "server /data". bitnamilegacy/minio starts server mode from its
+      # image command and can create the bucket on boot.
+      minio:
+        image: bitnamilegacy/minio:2025.7.23
+        env:
+          MINIO_ROOT_USER: ci-minio-access
+          MINIO_ROOT_PASSWORD: ci-minio-secret
+          MINIO_DEFAULT_BUCKETS: waoowaoo
+          MINIO_REGION_NAME: us-east-1
+        ports:
+          - "9000:9000"
+        options: >-
+          --health-cmd "curl -f http://127.0.0.1:9000/minio/health/live"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 20
+          --health-start-period 20s
     env:
       TEST_EXTERNAL_SERVICES: "1"
       DATABASE_URL: mysql://root:root@127.0.0.1:3307/waoowaoo_test
@@ -98,33 +117,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      # minio/minio's image CMD is only "minio". GitHub service containers cannot
-      # pass "server /data", so start server mode with docker run (same release
-      # as docker-compose.yml). Port 9000 is the S3 API; 9001 is the console.
-      - name: Start MinIO
-        run: |
-          set -euo pipefail
-          docker rm -f ci-minio >/dev/null 2>&1 || true
-          docker run -d --name ci-minio \
-            -p 9000:9000 \
-            -e MINIO_ROOT_USER="${MINIO_ACCESS_KEY}" \
-            -e MINIO_ROOT_PASSWORD="${MINIO_SECRET_KEY}" \
-            minio/minio:RELEASE.2025-02-28T09-55-16Z \
-            server /data --console-address ":9001"
-          ready=0
-          for _ in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:9000/minio/health/live >/dev/null; then
-              ready=1
-              break
-            fi
-            sleep 2
-          done
-          if [ "$ready" -ne 1 ]; then
-            echo "MinIO did not become ready"
-            docker logs ci-minio || true
-            exit 1
-          fi
 
       - name: Setup Node
         uses: actions/setup-node@v4
