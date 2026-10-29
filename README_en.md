@@ -83,8 +83,8 @@ npm install
 # Start infrastructure only
 docker compose up mysql redis minio -d
 
-# Run database migration
-npx prisma db push
+# Apply database migrations
+npx prisma migrate deploy
 
 # Start development server
 npm run dev
@@ -102,6 +102,14 @@ Visit [http://localhost:13000](http://localhost:13000) (Method 1 & 2) or [http:/
 > caddy run --config Caddyfile
 > ```
 > Then visit [https://localhost:1443](https://localhost:1443)
+
+---
+
+## Upgrading an existing database
+
+An existing database must follow [prisma/migrations/BOOTSTRAP.md](prisma/migrations/BOOTSTRAP.md) before switching to `migrate deploy`. Rehearse on a copy of production first.
+
+This change and [PR #8](https://github.com/HaominSun/waoowaoo/pull/8) must ship together.
 
 ---
 

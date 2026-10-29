@@ -137,7 +137,9 @@ async function main() {
 
   if (missing.length > 0) {
     process.stderr.write(`[check-saas-schema] Missing database objects:\n${missing.map((item) => `- ${item}`).join('\n')}\n`)
-    process.stderr.write('[check-saas-schema] Run `npx prisma migrate deploy` on a migration-managed database, or `npx prisma db push --skip-generate` for local development databases.\n')
+    // `prisma db push` stays only for local schema prototyping before a migration
+    // file exists. Deployed, Docker, and test databases use `prisma migrate`.
+    process.stderr.write('[check-saas-schema] Run `npx prisma migrate deploy` to apply migrations. `npx prisma db push --skip-generate` remains only for local schema prototyping before a migration is written.\n')
     process.exitCode = 1
     return
   }

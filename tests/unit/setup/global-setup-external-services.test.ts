@@ -21,6 +21,8 @@ import { runGlobalTeardown } from '../../setup/global-teardown'
 
 const ENV_KEYS = ['TEST_EXTERNAL_SERVICES', 'BILLING_TEST_BOOTSTRAP', 'SYSTEM_TEST_BOOTSTRAP', 'BILLING_TEST_KEEP_SERVICES', 'DATABASE_URL'] as const
 const THROWAWAY_DATABASE_URL = 'mysql://root:root@127.0.0.1:3307/waoowaoo_test'
+const MIGRATE_DEPLOY = 'npx prisma migrate deploy --schema prisma/schema.prisma'
+const MIGRATE_RESET = 'npx prisma migrate reset --force --skip-seed --schema prisma/schema.prisma'
 
 function commands() {
   return execSyncMock.mock.calls.map((call) => String(call[0]))
@@ -34,24 +36,24 @@ describe('global setup TEST_EXTERNAL_SERVICES switch', () => {
     process.env.DATABASE_URL = THROWAWAY_DATABASE_URL
   })
 
-  it('default: recreates docker compose services and pushes schema', async () => {
+  it('default: recreates docker compose services and applies migrations', async () => {
     const teardown = await globalSetup()
     expect(commands()).toEqual([
       'docker compose -f docker-compose.test.yml down -v --remove-orphans',
       'docker compose -f docker-compose.test.yml up -d --remove-orphans',
-      'npx prisma db push --skip-generate --schema prisma/schema.prisma',
+      MIGRATE_DEPLOY,
     ])
     execSyncMock.mockReset()
     await teardown()
     expect(commands()).toEqual(['docker compose -f docker-compose.test.yml down -v --remove-orphans'])
   })
 
-  it('TEST_EXTERNAL_SERVICES=1: no docker, force-reset schema, teardown keeps services', async () => {
+  it('TEST_EXTERNAL_SERVICES=1: no docker, migrate reset, teardown keeps services', async () => {
     process.env.TEST_EXTERNAL_SERVICES = '1'
     process.env.DATABASE_URL = THROWAWAY_DATABASE_URL
     const teardown = await globalSetup()
     expect(commands()).toEqual([
-      'npx prisma db push --skip-generate --force-reset --accept-data-loss --schema prisma/schema.prisma',
+      MIGRATE_RESET,
     ])
     execSyncMock.mockReset()
     await teardown()
@@ -66,42 +68,42 @@ describe('global setup TEST_EXTERNAL_SERVICES switch', () => {
     expect(execSyncMock).not.toHaveBeenCalled()
   })
 
-  it('external force-reset proceeds when the database name ends with _test', async () => {
+  it('external migrate reset proceeds when the database name ends with _test', async () => {
     process.env.TEST_EXTERNAL_SERVICES = '1'
     process.env.DATABASE_URL = 'mysql://root:root@127.0.0.1:3307/waoowaoo_test'
     await globalSetup()
     expect(commands()).toEqual([
-      'npx prisma db push --skip-generate --force-reset --accept-data-loss --schema prisma/schema.prisma',
+      MIGRATE_RESET,
     ])
   })
 
-  it('external force-reset rejects database name waoowaoo', async () => {
+  it('external migrate reset rejects database name waoowaoo', async () => {
     process.env.TEST_EXTERNAL_SERVICES = '1'
     process.env.DATABASE_URL = 'mysql://root:root@127.0.0.1:3307/waoowaoo'
     await expect(globalSetup()).rejects.toThrow('Refusing to force-reset database "waoowaoo"')
     expect(execSyncMock).not.toHaveBeenCalled()
   })
 
-  it('external force-reset rejects a missing DATABASE_URL', async () => {
+  it('external migrate reset rejects a missing DATABASE_URL', async () => {
     process.env.TEST_EXTERNAL_SERVICES = '1'
     delete process.env.DATABASE_URL
     await expect(globalSetup()).rejects.toThrow('DATABASE_URL is missing')
     expect(execSyncMock).not.toHaveBeenCalled()
   })
 
-  it('external force-reset rejects an unparseable DATABASE_URL', async () => {
+  it('external migrate reset rejects an unparseable DATABASE_URL', async () => {
     process.env.TEST_EXTERNAL_SERVICES = '1'
     process.env.DATABASE_URL = 'not-a-url'
     await expect(globalSetup()).rejects.toThrow('DATABASE_URL could not be parsed')
     expect(execSyncMock).not.toHaveBeenCalled()
   })
 
-  it('external force-reset ignores query params and proceeds for waoowaoo_test', async () => {
+  it('external migrate reset ignores query params and proceeds for waoowaoo_test', async () => {
     process.env.TEST_EXTERNAL_SERVICES = '1'
     process.env.DATABASE_URL = 'mysql://root:root@127.0.0.1:3307/waoowaoo_test?connection_limit=5'
     await globalSetup()
     expect(commands()).toEqual([
-      'npx prisma db push --skip-generate --force-reset --accept-data-loss --schema prisma/schema.prisma',
+      MIGRATE_RESET,
     ])
   })
 })

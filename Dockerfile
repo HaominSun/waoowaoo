@@ -37,7 +37,7 @@ COPY --from=builder /app/package.json ./package.json
 COPY --from=builder /app/.next ./.next
 COPY --from=builder /app/public ./public
 
-# Prisma schema（db push 需要）
+# Prisma schema 与 migrations（migrate deploy 需要）
 COPY --from=builder /app/prisma ./prisma
 
 # Worker 和 Watchdog 源码（tsx 运行 TypeScript）

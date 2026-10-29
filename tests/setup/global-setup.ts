@@ -17,7 +17,7 @@ function parseDbUrl(dbUrl: string) {
 }
 
 /**
- * External mode runs `prisma db push --force-reset`, which wipes the database
+ * External mode runs `prisma migrate reset`, which wipes the database
  * DATABASE_URL points at. Allow that only when the database name (URL path
  * segment, query string ignored) ends with `_test`.
  */
@@ -98,6 +98,9 @@ async function waitForRedis(maxAttempts = 60) {
   throw new Error('Redis test service did not become ready in time')
 }
 
+const MIGRATE_DEPLOY = 'npx prisma migrate deploy --schema prisma/schema.prisma'
+const MIGRATE_RESET = 'npx prisma migrate reset --force --skip-seed --schema prisma/schema.prisma'
+
 export default async function globalSetup() {
   loadTestEnv()
 
@@ -112,7 +115,9 @@ export default async function globalSetup() {
   // (the docker path gets a clean DB from `down -v`).
   const external = isExternalTestServices()
 
-  if (!external) {
+  if (external) {
+    assertExternalTestDatabase(process.env.DATABASE_URL)
+  } else {
     execSync('docker compose -f docker-compose.test.yml down -v --remove-orphans', {
       cwd: process.cwd(),
       stdio: 'inherit',
@@ -122,20 +127,24 @@ export default async function globalSetup() {
       cwd: process.cwd(),
       stdio: 'inherit',
     })
-  } else {
-    assertExternalTestDatabase(process.env.DATABASE_URL)
   }
 
   await waitForMysql()
   await waitForRedis()
 
-  const pushCmd = external
-    ? 'npx prisma db push --skip-generate --force-reset --accept-data-loss --schema prisma/schema.prisma'
-    : 'npx prisma db push --skip-generate --schema prisma/schema.prisma'
-  execSync(pushCmd, {
-    cwd: process.cwd(),
-    stdio: 'inherit',
-  })
+  if (external) {
+    // The name check must run again immediately before migrate reset.
+    assertExternalTestDatabase(process.env.DATABASE_URL)
+    execSync(MIGRATE_RESET, {
+      cwd: process.cwd(),
+      stdio: 'inherit',
+    })
+  } else {
+    execSync(MIGRATE_DEPLOY, {
+      cwd: process.cwd(),
+      stdio: 'inherit',
+    })
+  }
 
   return async () => {
     await runGlobalTeardown()

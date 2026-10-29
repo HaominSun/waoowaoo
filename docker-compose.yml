@@ -135,7 +135,7 @@ services:
         condition: service_healthy
     command: >
       sh -c "
-        npx prisma db push --skip-generate &&
+        npx prisma migrate deploy &&
         (sleep 5 && echo '' &&
         echo '╔══════════════════════════════════════════════════╗' &&
         echo '║            waoowaoo is ready!                    ║' &&
