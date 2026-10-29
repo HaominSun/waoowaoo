@@ -90,6 +90,8 @@ npx prisma db push
 npm run dev
 ```
 
+> **Deploy:** set `NEXTAUTH_SECRET` (or `AUTH_SECRET`) unless `NODE_ENV` is exactly `development` or `test`. Any other value, including unset or `staging`, throws when an asset-list cursor is issued or verified. The API responds with a generic 500.
+
 ---
 
 Visit [http://localhost:13000](http://localhost:13000) (Method 1 & 2) or [http://localhost:3000](http://localhost:3000) (Method 3) to get started!

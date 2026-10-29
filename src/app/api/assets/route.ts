@@ -2,8 +2,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import { apiHandler, ApiError } from '@/lib/api-errors'
 import { isErrorResponse, requireProjectAuthLight, requireUserAuth } from '@/lib/api-auth'
 import { createAsset } from '@/lib/assets/services/asset-actions'
+import { readAssetPage } from '@/lib/assets/services/read-assets-page'
 import { readAssets } from '@/lib/assets/services/read-assets'
 import type { AssetKind, AssetScope } from '@/lib/assets/contracts'
+import { parseListPage, type ListFilterSet } from '@/lib/pagination/keyset-cursor'
 
 function isAssetScope(value: string | null): value is AssetScope {
   return value === 'global' || value === 'project'
@@ -11,6 +13,23 @@ function isAssetScope(value: string | null): value is AssetScope {
 
 function isAssetKind(value: string | null): value is AssetKind {
   return value === 'character' || value === 'location' || value === 'prop' || value === 'voice'
+}
+
+function assetListFilters(input: {
+  scope: AssetScope
+  projectId: string | null
+  folderId: string | null
+  kind: AssetKind | null
+  userId: string
+}): Omit<ListFilterSet, 'q'> {
+  return {
+    resource: 'assets',
+    userId: input.userId,
+    folderId: input.folderId || null,
+    kind: input.kind,
+    scope: input.scope,
+    projectId: input.projectId || null,
+  }
 }
 
 export const GET = apiHandler(async (request: NextRequest) => {
@@ -24,32 +43,49 @@ export const GET = apiHandler(async (request: NextRequest) => {
     throw new ApiError('INVALID_PARAMS', { details: 'scope must be global or project' })
   }
 
+  const query = {
+    scope,
+    projectId,
+    folderId,
+    kind: isAssetKind(kind) ? kind : null,
+  }
+
   if (scope === 'project') {
     if (!projectId) {
       throw new ApiError('INVALID_PARAMS', { details: 'projectId is required for project scope' })
     }
     const authResult = await requireProjectAuthLight(projectId)
     if (isErrorResponse(authResult)) return authResult
-    const assets = await readAssets({
-      scope,
-      projectId,
-      folderId,
-      kind: isAssetKind(kind) ? kind : null,
+    const page = parseListPage({
+      cursor: searchParams.get('cursor'),
+      limit: searchParams.get('limit'),
+      q: searchParams.get('q'),
+      filters: assetListFilters({ ...query, userId: authResult.session.user.id }),
     })
-    return NextResponse.json({ assets })
-  } else {
-    const authResult = await requireUserAuth()
-    if (isErrorResponse(authResult)) return authResult
-    const assets = await readAssets({
-      scope,
-      projectId,
-      folderId,
-      kind: isAssetKind(kind) ? kind : null,
-    }, {
-      userId: authResult.session.user.id,
-    })
+    if (page.enabled) {
+      return NextResponse.json(await readAssetPage(page))
+    }
+    const assets = await readAssets(query)
     return NextResponse.json({ assets })
   }
+
+  const authResult = await requireUserAuth()
+  if (isErrorResponse(authResult)) return authResult
+  const page = parseListPage({
+    cursor: searchParams.get('cursor'),
+    limit: searchParams.get('limit'),
+    q: searchParams.get('q'),
+    filters: assetListFilters({ ...query, userId: authResult.session.user.id }),
+  })
+  if (page.enabled) {
+    return NextResponse.json(await readAssetPage(page, {
+      userId: authResult.session.user.id,
+    }))
+  }
+  const assets = await readAssets(query, {
+    userId: authResult.session.user.id,
+  })
+  return NextResponse.json({ assets })
 })
 
 type CreateAssetBody = {

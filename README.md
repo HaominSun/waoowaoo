@@ -110,6 +110,8 @@ npm run dev
 
 > 首次启动会自动完成数据库初始化，无需任何额外配置。
 
+> **部署：** 除非 `NODE_ENV` 正好是 `development` 或 `test`，否则必须设置 `NEXTAUTH_SECRET`（或 `AUTH_SECRET`）。包括未设置和 `staging` 在内的其他取值，在签发或校验资产列表游标时会抛错，接口返回通用的 500，响应里不包含配置细节。
+
 > \[!TIP]
 > **如果遇到网页卡顿**：HTTP 模式下浏览器可能限制并发连接。可安装 [Caddy](https://caddyserver.com/docs/install) 启用 HTTPS：
 >
