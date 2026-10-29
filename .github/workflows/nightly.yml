@@ -17,7 +17,7 @@ env:
 
 jobs:
   test-all:
-    name: test:all (MySQL + Redis)
+    name: test:all (MySQL + Redis + MinIO)
     runs-on: ubuntu-latest
     timeout-minutes: 120
     services:
@@ -49,11 +49,47 @@ jobs:
       REDIS_HOST: 127.0.0.1
       REDIS_PORT: "6380"
       TZ: Asia/Shanghai
+      # Throwaway CI credentials. Defaults match .env.example / src/lib/storage.
+      STORAGE_TYPE: minio
+      MINIO_ENDPOINT: http://127.0.0.1:9000
+      MINIO_REGION: us-east-1
+      MINIO_BUCKET: waoowaoo
+      MINIO_ACCESS_KEY: ci-minio-access
+      MINIO_SECRET_KEY: ci-minio-secret
+      MINIO_FORCE_PATH_STYLE: "true"
+      MINIO_UPLOAD_TIMEOUT_MS: "60000"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      # minio/minio's image CMD is only "minio". GitHub service containers cannot
+      # pass "server /data", so start server mode with docker run (same release
+      # as docker-compose.yml). Port 9000 is the S3 API; 9001 is the console.
+      - name: Start MinIO
+        run: |
+          set -euo pipefail
+          docker rm -f ci-minio >/dev/null 2>&1 || true
+          docker run -d --name ci-minio \
+            -p 9000:9000 \
+            -e MINIO_ROOT_USER="${MINIO_ACCESS_KEY}" \
+            -e MINIO_ROOT_PASSWORD="${MINIO_SECRET_KEY}" \
+            minio/minio:RELEASE.2025-02-28T09-55-16Z \
+            server /data --console-address ":9001"
+          ready=0
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:9000/minio/health/live >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 2
+          done
+          if [ "$ready" -ne 1 ]; then
+            echo "MinIO did not become ready"
+            docker logs ci-minio || true
+            exit 1
+          fi
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -63,6 +99,15 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Create MinIO bucket and seed system video
+        run: |
+          set -euo pipefail
+          if ! command -v ffmpeg >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y ffmpeg
+          fi
+          npx tsx scripts/ci/prepare-minio.ts
 
       - name: Full test suite
         run: npm run test:all
