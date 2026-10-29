@@ -133,7 +133,18 @@ function classifyDiff(result: DiffResult): 'empty' | 'mismatch' | 'error' {
   return 'error'
 }
 
+const MIGRATION_NAME = /^\d{14}_[a-z0-9_]+$/
+
+export function assertSafeMigrationName(name: string): void {
+  if (!MIGRATION_NAME.test(name)) {
+    throw new Error(
+      `Refusing to print a DELETE for migration name "${name}": name must match /^\\d{14}_[a-z0-9_]+$/.`,
+    )
+  }
+}
+
 export function recoveryInstructions(migrationNames: string[]): string {
+  for (const name of migrationNames) assertSafeMigrationName(name)
   const quoted = migrationNames.map((name) => `  '${name}'`).join(',\n')
   return [
     'This run already inserted these _prisma_migrations rows. Delete only these rows, then fix the copy before retrying:',

@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest'
 import {
   CREDIT_QUOTA_MIGRATION,
   assertDroppableTestDatabase,
+  assertSafeMigrationName,
   databaseNameFromUrl,
   historicalMigrations,
+  recoveryInstructions,
   runBaselineCheck,
   type DiffResult,
 } from '../../../scripts/migrate-baseline-check'
@@ -113,6 +115,24 @@ describe('migrate baseline check', () => {
     expect(result.resolved).toEqual([])
     expect(diffCalls).toBe(0)
     expect(result.out).toContain('Nothing to mark')
+  })
+
+  it('rejects a migration name that is not safe to interpolate into the recovery DELETE', () => {
+    expect(() => assertSafeMigrationName('20260301000000_baseline')).not.toThrow()
+    expect(recoveryInstructions(['20260301000000_baseline'])).toContain("'20260301000000_baseline'")
+    const unsafe = [
+      "20260301000000_baseline'; DROP TABLE users; --",
+      '20260301000000_Baseline',
+      'baseline',
+      '2026030100000_baseline',
+      '20260301000000_',
+      '20260301000000_base-line',
+      '',
+    ]
+    for (const name of unsafe) {
+      expect(() => recoveryInstructions([name])).toThrow(/DELETE/)
+      expect(() => assertSafeMigrationName(name)).toThrow(/DELETE/)
+    }
   })
 
   it('exits non-zero when the post-mark diff is not empty', () => {

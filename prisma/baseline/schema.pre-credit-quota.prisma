@@ -1,4 +1,4 @@
-// Snapshot of prisma/schema.prisma at da5d172 (merge-base with feature/platform-admin), before the credit-quota migration.
+// Pre-credit-quota schema: prisma/schema.prisma before 20261028170000_credit_quota_ledger.
 // Do not edit this to match later schema changes. scripts/migrate-baseline-check.ts diffs live databases against it.
 generator client {
   provider = "prisma-client-js"
