@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client'
 import { describe, expect, it } from 'vitest'
 import {
   calendarMonthStart,
@@ -10,8 +11,17 @@ import {
   organizationBalanceHasArrears,
   planTieredDeduction,
   readStoredQuota,
+  splitCreditPortions,
   type TieredDeductionInput,
 } from '@/lib/billing/credit-quota'
+
+function expectPortionsSum(total: number, plan?: number | null, balance?: number | null) {
+  const split = splitCreditPortions(total, plan, balance)
+  const sum = new Prisma.Decimal(split.planCreditPortion.toFixed(6))
+    .plus(new Prisma.Decimal(split.balancePortion.toFixed(6)))
+  expect(sum.equals(new Prisma.Decimal(total.toFixed(6)))).toBe(true)
+  return split
+}
 
 function deduction(overrides: Partial<TieredDeductionInput> = {}) {
   return planTieredDeduction({
@@ -241,6 +251,33 @@ describe('planTieredDeduction', () => {
     expect(organizationBalanceHasArrears(0)).toBe(false)
     expect(organizationBalanceHasArrears(0.0000004)).toBe(false)
     expect(organizationBalanceHasArrears(0.01)).toBe(true)
+  })
+})
+
+describe('splitCreditPortions', () => {
+  it('keeps a plan-only charge from also taking the full balance', () => {
+    expect(expectPortionsSum(10, 10, 0)).toEqual({ planCreditPortion: 10, balancePortion: 0 })
+    expect(expectPortionsSum(10, 10, undefined)).toEqual({ planCreditPortion: 10, balancePortion: 0 })
+  })
+
+  it('splits a partial plan credit and does not fall back to the whole total', () => {
+    expect(expectPortionsSum(10, 4, 6)).toEqual({ planCreditPortion: 4, balancePortion: 6 })
+    expect(expectPortionsSum(10, 4, undefined)).toEqual({ planCreditPortion: 4, balancePortion: 6 })
+    expect(expectPortionsSum(10, 4, 10)).toEqual({ planCreditPortion: 4, balancePortion: 6 })
+  })
+
+  it('assigns the whole charge to balance when plan credit is absent or zero', () => {
+    expect(expectPortionsSum(10, 0, 10)).toEqual({ planCreditPortion: 0, balancePortion: 10 })
+    expect(expectPortionsSum(10, undefined, undefined)).toEqual({ planCreditPortion: 0, balancePortion: 10 })
+    expect(expectPortionsSum(10, undefined, 10)).toEqual({ planCreditPortion: 0, balancePortion: 10 })
+  })
+
+  it('sums 0.1 and 0.2 to 0.3 with decimal arithmetic', () => {
+    expect(expectPortionsSum(0.3, 0.1, 0.2)).toEqual({ planCreditPortion: 0.1, balancePortion: 0.2 })
+  })
+
+  it('tops up a short explicit balance so the portions still equal the total', () => {
+    expect(expectPortionsSum(10, 1, 1)).toEqual({ planCreditPortion: 1, balancePortion: 9 })
   })
 })
 

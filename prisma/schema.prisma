@@ -672,7 +672,7 @@ model CreditAccount {
   member              OrganizationMember?  @relation(fields: [memberId], references: [id], onDelete: Cascade)
   quotaAllocationLogs QuotaAllocationLog[]
 
-  @@unique([organizationId, holderKey, periodStart, periodEnd])
+  @@unique([organizationId, holderKey, periodStart, periodEnd], map: "credit_accounts_period_holder_key")
   @@index([organizationId, periodStart])
   @@index([memberId])
   @@map("credit_accounts")

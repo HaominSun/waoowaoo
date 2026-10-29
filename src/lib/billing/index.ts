@@ -10,6 +10,7 @@ export {
   evaluateMemberQuota,
   OVERRUN_TOP_UP_RATIO,
   planTieredDeduction,
+  splitCreditPortions,
 } from './credit-quota'
 export {
   creditAccountHolderKey,

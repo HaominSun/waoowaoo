@@ -413,15 +413,15 @@ describe('billing/service', () => {
       modeMock.getBillingMode.mockResolvedValue('SHADOW')
       entitlementsMock.assertOrganizationCanConsume.mockResolvedValue({
         organizationId: 'org_1',
-        planCreditApplied: 1,
-        balanceChargeApplied: 2,
+        planCreditApplied: 4,
+        balanceChargeApplied: 6,
       })
 
       const prepared = await prepareTaskBilling({
         id: 'task_org_shadow',
         userId: 'u1',
         projectId: 'project_org',
-        billingInfo: buildTaskInfo(),
+        billingInfo: buildTaskInfo({ maxFrozenCost: 10 }),
       })
 
       const info = prepared as Extract<TaskBillingInfo, { billable: true }>
@@ -434,8 +434,46 @@ describe('billing/service', () => {
         phase: 'prepare',
         taskId: 'task_org_shadow',
         organizationId: 'org_1',
-        planCreditPortion: 1,
-        balancePortion: 2,
+        estimatedAmount: 10,
+        planCreditPortion: 4,
+        balancePortion: 6,
+      }))
+    })
+
+    it.each([
+      {
+        name: 'no balance charge',
+        policy: { organizationId: 'org_1', planCreditApplied: 10, balanceChargeApplied: 0 },
+        planCreditPortion: 10,
+        balancePortion: 0,
+      },
+      {
+        name: 'partial plan with the balance charge omitted',
+        policy: { organizationId: 'org_1', planCreditApplied: 4 },
+        planCreditPortion: 4,
+        balancePortion: 6,
+      },
+      {
+        name: 'full balance charge',
+        policy: { organizationId: 'org_1', planCreditApplied: 0, balanceChargeApplied: 10 },
+        planCreditPortion: 0,
+        balancePortion: 10,
+      },
+    ])('prepareTaskBilling shadow portions stay inside the quote for $name', async ({ policy, planCreditPortion, balancePortion }) => {
+      modeMock.getBillingMode.mockResolvedValue('SHADOW')
+      entitlementsMock.assertOrganizationCanConsume.mockResolvedValue(policy)
+
+      await prepareTaskBilling({
+        id: 'task_portion_shadow',
+        userId: 'u1',
+        projectId: 'project_org',
+        billingInfo: buildTaskInfo({ maxFrozenCost: 10 }),
+      })
+
+      expect(creditLedgerMock.recordShadowCreditLedger).toHaveBeenCalledWith(expect.objectContaining({
+        estimatedAmount: 10,
+        planCreditPortion,
+        balancePortion,
       }))
     })
 
@@ -487,7 +525,15 @@ describe('billing/service', () => {
         mode: 'SHADOW',
         phase: 'settle',
         taskId: 'task_shadow_settle',
+        planCreditPortion: 0,
+        balancePortion: expect.any(Number),
       }))
+      const settledCall = creditLedgerMock.recordShadowCreditLedger.mock.calls.at(-1)?.[0] as {
+        actualAmount: number
+        planCreditPortion: number
+        balancePortion: number
+      }
+      expect(settledCall.planCreditPortion + settledCall.balancePortion).toBeCloseTo(settledCall.actualAmount, 6)
 
       const offSettled = await settleTaskBilling({
         id: 'task_off_settle',
@@ -501,6 +547,27 @@ describe('billing/service', () => {
       expect(creditLedgerMock.recordShadowCreditLedger).toHaveBeenCalledTimes(1)
       expect(creditLedgerMock.recordShadowCreditLedger).toHaveBeenCalledWith(expect.objectContaining({
         taskId: 'task_shadow_settle',
+      }))
+    })
+
+    it('settleTaskBilling keeps shadow portions inside the actual cost when plan credit is partial', async () => {
+      const settled = await settleTaskBilling({
+        id: 'task_shadow_partial',
+        userId: 'u1',
+        projectId: 'p1',
+        billingInfo: buildTaskInfo({
+          modeSnapshot: 'SHADOW',
+          status: 'quoted',
+          maxFrozenCost: 10,
+          planCreditApplied: 4,
+        }),
+      })
+      expect((settled as Extract<TaskBillingInfo, { billable: true }>).chargedCost).toBe(0)
+      expect(creditLedgerMock.recordShadowCreditLedger).toHaveBeenCalledWith(expect.objectContaining({
+        phase: 'settle',
+        actualAmount: 10,
+        planCreditPortion: 4,
+        balancePortion: 6,
       }))
     })
 

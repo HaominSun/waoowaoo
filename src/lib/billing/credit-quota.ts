@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client'
 import { roundMoney, toMoneyNumber, type MoneyValue } from './money'
 
 /**
@@ -131,6 +132,51 @@ export function evaluateMemberQuota(input: {
 
 export function organizationBalanceHasArrears(arrears: number): boolean {
   return money(arrears) > 0
+}
+
+function decimalMoney(value: number): Prisma.Decimal {
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric) || numeric <= 0) return new Prisma.Decimal(0)
+  return new Prisma.Decimal(numeric.toFixed(MONEY_SCALE))
+}
+
+/**
+ * Split a charged total into plan credits and balance.
+ * A missing balance charge is the remainder after plan credits, not the whole total.
+ * The two portions always sum to `total` (Decimal arithmetic, scale 6).
+ */
+export function splitCreditPortions(
+  total: number,
+  planCreditApplied?: number | null,
+  balanceChargeApplied?: number | null,
+): { planCreditPortion: number; balancePortion: number } {
+  const totalAmount = decimalMoney(total)
+  const planSet = planCreditApplied !== null && planCreditApplied !== undefined && Number.isFinite(Number(planCreditApplied))
+  const balanceSet = balanceChargeApplied !== null && balanceChargeApplied !== undefined && Number.isFinite(Number(balanceChargeApplied))
+
+  let plan = new Prisma.Decimal(0)
+  let balance = new Prisma.Decimal(0)
+  if (!planSet && !balanceSet) {
+    balance = totalAmount
+  } else if (!balanceSet) {
+    plan = Prisma.Decimal.min(decimalMoney(Number(planCreditApplied)), totalAmount)
+    balance = totalAmount.minus(plan)
+  } else if (!planSet) {
+    balance = Prisma.Decimal.min(decimalMoney(Number(balanceChargeApplied)), totalAmount)
+    plan = totalAmount.minus(balance)
+  } else {
+    plan = Prisma.Decimal.min(decimalMoney(Number(planCreditApplied)), totalAmount)
+    const room = totalAmount.minus(plan)
+    balance = Prisma.Decimal.min(decimalMoney(Number(balanceChargeApplied)), room)
+    if (!plan.plus(balance).equals(totalAmount)) {
+      balance = totalAmount.minus(plan)
+    }
+  }
+
+  return {
+    planCreditPortion: Number(plan.toFixed(MONEY_SCALE)),
+    balancePortion: Number(balance.toFixed(MONEY_SCALE)),
+  }
 }
 
 export function cnyToDisplayCredits(amountCny: number, creditsPerCny = DEFAULT_CREDITS_PER_CNY): number {

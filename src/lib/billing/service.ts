@@ -34,6 +34,7 @@ import { recordUsageCostOnly } from './reporting'
 import type { ApiType, UsageUnit } from './cost'
 import { getBillingMode } from './mode'
 import { recordShadowCreditLedger } from './credit-ledger'
+import { splitCreditPortions } from './credit-quota'
 import { BillingOperationError, InsufficientBalanceError } from './errors'
 import { roundMoney } from './money'
 import { withTextUsageCollection, type TextUsageEntry } from './runtime-usage'
@@ -916,6 +917,7 @@ export async function prepareTaskBilling(task: {
     next.status = 'quoted'
     next.maxFrozenCost = quotedCost
     // Shadow ledger only. ENFORCE still freezes below and does not write this table.
+    const quotedPortions = splitCreditPortions(quotedCost, next.planCreditApplied, next.balanceChargeApplied)
     await recordShadowCreditLedger({
       mode,
       phase: 'prepare',
@@ -926,8 +928,8 @@ export async function prepareTaskBilling(task: {
       operationType: info.apiType,
       quantity: info.quantity,
       estimatedAmount: quotedCost,
-      planCreditPortion: next.planCreditApplied ?? 0,
-      balancePortion: next.balanceChargeApplied ?? quotedCost,
+      planCreditPortion: quotedPortions.planCreditPortion,
+      balancePortion: quotedPortions.balancePortion,
     })
     return next
   }
@@ -1078,13 +1080,14 @@ export async function settleTaskBilling(task: {
   }
 
   if (mode === 'SHADOW') {
+    const settledPortions = splitCreditPortions(actual.actualCost, info.planCreditApplied, info.balanceChargeApplied)
     await recordShadowUsage(task.userId, {
       projectId: task.projectId,
       episodeId: typeof task.episodeId === 'string' ? task.episodeId : null,
       taskType: info.taskType || null,
         organizationId: info.organizationId || null,
-        planCreditAmount: info.planCreditApplied || 0,
-        balanceAmount: info.balanceChargeApplied ?? actual.actualCost,
+        planCreditAmount: settledPortions.planCreditPortion,
+        balanceAmount: settledPortions.balancePortion,
       action: info.action,
       apiType: info.apiType,
       model: info.model,
@@ -1113,8 +1116,8 @@ export async function settleTaskBilling(task: {
       quantity: actual.actualQuantity,
       estimatedAmount: quotedCost,
       actualAmount: actual.actualCost,
-      planCreditPortion: info.planCreditApplied || 0,
-      balancePortion: info.balanceChargeApplied ?? actual.actualCost,
+      planCreditPortion: settledPortions.planCreditPortion,
+      balancePortion: settledPortions.balancePortion,
     })
     return {
       ...info,

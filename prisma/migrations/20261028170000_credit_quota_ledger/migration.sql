@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS `credit_accounts` (
   `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   `updatedAt` DATETIME(3) NOT NULL,
   PRIMARY KEY (`id`),
-  UNIQUE INDEX `credit_accounts_organizationId_holderKey_periodStart_periodEnd_key` (`organizationId`, `holderKey`, `periodStart`, `periodEnd`),
+  UNIQUE INDEX `credit_accounts_period_holder_key` (`organizationId`, `holderKey`, `periodStart`, `periodEnd`),
   INDEX `credit_accounts_organizationId_periodStart_idx` (`organizationId`, `periodStart`),
   INDEX `credit_accounts_memberId_idx` (`memberId`),
   CONSTRAINT `credit_accounts_organizationId_fkey` FOREIGN KEY (`organizationId`) REFERENCES `organizations`(`id`) ON DELETE CASCADE ON UPDATE CASCADE,
