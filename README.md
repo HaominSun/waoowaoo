@@ -95,14 +95,14 @@ mysql:13306  redis:16379  minio:19000
 docker compose up mysql redis minio -d
 
 # 初始化数据库表结构（首次必须执行，跳过会导致启动后报错）
-npx prisma db push
+npx prisma migrate deploy
 
 # 启动开发服务器
 npm run dev
 ```
 
 > \[!WARNING]
-> 跳过 `npx prisma db push` 会导致所有数据库表不存在，启动后报错 `The table 'tasks' does not exist`。请务必先运行此命令再启动开发服务器。
+> 跳过 `npx prisma migrate deploy` 会导致所有数据库表不存在，启动后报错 `The table 'tasks' does not exist`。请务必先运行此命令再启动开发服务器。
 
 ***
 
@@ -118,6 +118,14 @@ npm run dev
 > ```
 >
 > 然后访问 <https://localhost:1443>
+
+***
+
+## Upgrading an existing database
+
+已经建过表的数据库，在切换到 `migrate deploy` 之前，必须先遵循 [prisma/migrations/BOOTSTRAP.md](prisma/migrations/BOOTSTRAP.md)。请先在生产库的副本上演练，通过后再对生产环境执行。
+
+本变更与 [PR #8](https://github.com/HaominSun/waoowaoo/pull/8) 必须一起发布，不能单独上线。
 
 ***
 
