@@ -441,6 +441,49 @@ describe('api contract - asset list cursor pagination', () => {
     clearStore()
   })
 
+  it('returns an empty global list', async () => {
+    const legacy = await assetsGet('scope=global')
+    expect(legacy.status).toBe(200)
+    expect(legacy.text).toBe(JSON.stringify({ assets: [] }))
+
+    const paged = await assetsGet('scope=global&limit=24')
+    expect(paged.status).toBe(200)
+    expect(paged.body).toEqual({ assets: [], nextCursor: null, total: 0 })
+    expect(paged.text).toBe(JSON.stringify({ assets: [], nextCursor: null, total: 0 }))
+  })
+
+  it('walks every global page until the union equals the full dataset', async () => {
+    state.characters.push(
+      character({ id: 'c3', name: 'C3', createdAt: at(5) }),
+      character({ id: 'c2', name: 'C2', createdAt: at(4) }),
+    )
+    state.locations.push(
+      location({ id: 'loc', name: 'Loc', createdAt: at(3) }),
+      location({ id: 'prop', name: 'Prop', createdAt: at(2), assetKind: 'prop' }),
+    )
+    state.voices.push(voice({ id: 'voice', name: 'Voice', createdAt: at(1) }))
+    const expected = ['c3', 'c2', 'loc', 'prop', 'voice']
+
+    const seen: string[] = []
+    let cursor: string | null = null
+    let pages = 0
+    while (pages < 10) {
+      const query = cursor
+        ? `scope=global&limit=2&cursor=${encodeURIComponent(cursor)}`
+        : 'scope=global&limit=2'
+      const response = await assetsGet(query)
+      expect(response.status).toBe(200)
+      seen.push(...response.body.assets.map((asset) => asset.id))
+      pages += 1
+      if (!response.body.nextCursor) break
+      cursor = response.body.nextCursor
+    }
+
+    expect(pages).toBe(3)
+    expect(seen).toEqual(expected)
+    expect(new Set(seen).size).toBe(seen.length)
+  })
+
   it('keeps GET /api/assets byte-for-byte compatible when cursor and limit are absent', async () => {
     const olderCharacter = character({ id: 'char-old', name: 'Old', createdAt: at(30) })
     const newerCharacter = character({ id: 'char-new', name: 'New', createdAt: at(10) })
@@ -642,28 +685,34 @@ describe('api contract - asset list cursor pagination', () => {
     expect(literal.body.assets.map((asset) => asset.id)).toEqual(['literal'])
 
     const ownerPage = await assetsGet('scope=global&folderId=folder-a&kind=character&limit=1')
-    vi.clearAllMocks()
-    state.userId = 'user-2'
-    state.characters.push(character({ id: 'mine', name: 'Mine', createdAt: at(1), folderId: 'folder-a', userId: 'user-2' }))
-    const foreignFolder = await assetsGet('scope=global&folderId=folder-a&limit=24')
-    expect(foreignFolder.body.assets.map((asset) => asset.id)).toEqual(['secret', 'mine'])
-    expect(foreignFolder.body.total).toBe(2)
-
-    const foreignCursor = await assetsGet(`scope=global&folderId=folder-a&kind=character&limit=10&cursor=${encodeURIComponent(ownerPage.body.nextCursor ?? '')}`)
-    expect(foreignCursor.status).toBe(200)
-    expect(foreignCursor.body.assets.map((asset) => asset.id)).toEqual(['mine'])
-    for (const call of prismaMock.globalCharacter.findMany.mock.calls) {
-      expect(call[0]?.where).toEqual(expect.objectContaining({ userId: 'user-2' }))
-    }
+    const ownerNext = await assetsGet(`scope=global&folderId=folder-a&kind=character&limit=10&cursor=${encodeURIComponent(ownerPage.body.nextCursor ?? '')}`)
+    expect(ownerNext.status).toBe(200)
     expect(prismaMock.globalCharacter.findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({
-        userId: 'user-2',
+        userId: 'user-1',
         folderId: 'folder-a',
         OR: expect.any(Array),
       }),
       take: 11,
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     }))
+
+    vi.clearAllMocks()
+    state.userId = 'user-2'
+    state.characters.push(character({ id: 'mine', name: 'Mine', createdAt: at(1), folderId: 'folder-a', userId: 'user-2' }))
+    const foreignFolder = await assetsGet('scope=global&folderId=folder-a&limit=24')
+    expect(foreignFolder.body.assets.map((asset) => asset.id)).toEqual(['secret', 'mine'])
+    expect(foreignFolder.body.total).toBe(2)
+    for (const call of prismaMock.globalCharacter.findMany.mock.calls) {
+      expect(call[0]?.where).toEqual(expect.objectContaining({ userId: 'user-2' }))
+    }
+
+    prismaMock.globalCharacter.findMany.mockClear()
+    const foreignCursor = await assetsGet(`scope=global&folderId=folder-a&kind=character&limit=10&cursor=${encodeURIComponent(ownerPage.body.nextCursor ?? '')}`)
+    expect(foreignCursor.status).toBe(400)
+    expect(foreignCursor.body.error.code).toBe('INVALID_PARAMS')
+    expect(foreignCursor.body.error.message).toBe('Cursor does not match the current filters')
+    expect(prismaMock.globalCharacter.findMany).not.toHaveBeenCalled()
   })
 
   it('stays on the keyset when rows are created, edited, or deleted during pagination', async () => {
@@ -737,6 +786,12 @@ describe('api contract - asset list cursor pagination', () => {
     expect(next.body.assets.map((asset) => asset.id)).toEqual(['room'])
     expect(next.body.nextCursor).toBeNull()
 
+    state.userId = 'user-2'
+    const otherUser = await assetsGet(`scope=project&projectId=project-1&limit=2&cursor=${encodeURIComponent(paged.body.nextCursor ?? '')}`)
+    expect(otherUser.status).toBe(400)
+    expect(otherUser.body.error.message).toBe('Cursor does not match the current filters')
+    state.userId = 'user-1'
+
     const otherProject = await assetsGet(`scope=project&projectId=project-2&limit=2&cursor=${encodeURIComponent(paged.body.nextCursor ?? '')}`)
     expect(otherProject.status).toBe(400)
     expect(otherProject.body.error.message).toBe('Cursor does not match the current filters')
@@ -787,7 +842,7 @@ describe('api contract - asset list cursor pagination', () => {
     const isolated = await stylesGet('limit=10')
     expect(isolated.body.styles.map((item) => item.id)).toEqual(['style-d'])
     const replay = await stylesGet(`q=ink&limit=10&cursor=${encodeURIComponent(first.body.nextCursor ?? '')}`)
-    expect(replay.status).toBe(200)
-    expect(replay.body.styles.map((item) => item.id)).toEqual(['style-d'])
+    expect(replay.status).toBe(400)
+    expect(replay.body.error.message).toBe('Cursor does not match the current filters')
   })
 })

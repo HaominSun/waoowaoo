@@ -9,9 +9,15 @@ const CURSOR_VERSION = 1
 
 export type ListCursorResource = 'assets' | 'styles'
 
-/** Filters bound into the cursor. A cursor is only valid for the same set. */
+/**
+ * Filters sealed into the signed cursor. A cursor is valid only for this set.
+ * `userId` is included on purpose: list queries are already scoped to the caller,
+ * and binding the account makes another user's replay a 400 instead of a page of
+ * that caller's own rows.
+ */
 export type ListFilterSet = {
   resource: ListCursorResource
+  userId: string
   folderId: string | null
   q: string | null
   kind: string | null
@@ -44,12 +50,27 @@ type CursorBody = {
   sig: string
 }
 
-// Used only when NEXTAUTH_SECRET / AUTH_SECRET is unset. Signatures then stay valid for this process.
+export class CursorSecretError extends Error {
+  constructor() {
+    super('NEXTAUTH_SECRET or AUTH_SECRET is required to sign asset list cursors in production')
+    this.name = 'CursorSecretError'
+  }
+}
+
+// Dev/test only. Production must set NEXTAUTH_SECRET or AUTH_SECRET; this value
+// changes on every process start and is never used when NODE_ENV=production.
 const ephemeralCursorSecret = randomBytes(32).toString('hex')
 
-function cursorSecret(): string {
+function configuredCursorSecret(): string | null {
   const secret = process.env.NEXTAUTH_SECRET?.trim() || process.env.AUTH_SECRET?.trim()
-  return secret && secret.length > 0 ? secret : ephemeralCursorSecret
+  return secret && secret.length > 0 ? secret : null
+}
+
+function cursorSecret(): string {
+  const secret = configuredCursorSecret()
+  if (secret) return secret
+  if (process.env.NODE_ENV === 'production') throw new CursorSecretError()
+  return ephemeralCursorSecret
 }
 
 export function normalizeSearchText(value: string | null | undefined): string | null {
@@ -61,6 +82,7 @@ export function normalizeSearchText(value: string | null | undefined): string | 
 export function hashListFilters(filters: ListFilterSet): string {
   const canonical = [
     filters.resource,
+    filters.userId,
     filters.folderId ?? '',
     filters.q ?? '',
     filters.kind ?? '',
@@ -137,10 +159,11 @@ function decodeListCursorUnchecked(token: string, filters: ListFilterSet): Decod
 }
 
 export function decodeListCursor(token: string, filters: ListFilterSet): DecodedListCursor {
+  cursorSecret()
   try {
     return decodeListCursorUnchecked(token, filters)
   } catch (error) {
-    if (error instanceof ApiError) throw error
+    if (error instanceof ApiError || error instanceof CursorSecretError) throw error
     throwInvalidCursor()
   }
 }

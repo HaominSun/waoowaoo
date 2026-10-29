@@ -90,6 +90,8 @@ npx prisma db push
 npm run dev
 ```
 
+> **Production:** set `NEXTAUTH_SECRET` (or `AUTH_SECRET`) before serving traffic. Asset hub list cursors are signed with it. If `NODE_ENV=production` and that secret is missing, issuing or verifying a cursor throws. Local development and tests can omit it.
+
 ---
 
 Visit [http://localhost:13000](http://localhost:13000) (Method 1 & 2) or [http://localhost:3000](http://localhost:3000) (Method 3) to get started!

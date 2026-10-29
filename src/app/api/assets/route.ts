@@ -20,9 +20,11 @@ function assetListFilters(input: {
   projectId: string | null
   folderId: string | null
   kind: AssetKind | null
+  userId: string
 }): Omit<ListFilterSet, 'q'> {
   return {
     resource: 'assets',
+    userId: input.userId,
     folderId: input.folderId || null,
     kind: input.kind,
     scope: input.scope,
@@ -58,7 +60,7 @@ export const GET = apiHandler(async (request: NextRequest) => {
       cursor: searchParams.get('cursor'),
       limit: searchParams.get('limit'),
       q: searchParams.get('q'),
-      filters: assetListFilters(query),
+      filters: assetListFilters({ ...query, userId: authResult.session.user.id }),
     })
     if (page.enabled) {
       return NextResponse.json(await readAssetPage(page))
@@ -73,7 +75,7 @@ export const GET = apiHandler(async (request: NextRequest) => {
     cursor: searchParams.get('cursor'),
     limit: searchParams.get('limit'),
     q: searchParams.get('q'),
-    filters: assetListFilters(query),
+    filters: assetListFilters({ ...query, userId: authResult.session.user.id }),
   })
   if (page.enabled) {
     return NextResponse.json(await readAssetPage(page, {

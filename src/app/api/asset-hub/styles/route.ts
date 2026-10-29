@@ -15,6 +15,7 @@ export const GET = apiHandler(async (request: NextRequest) => {
     q: request.nextUrl.searchParams.get('q'),
     filters: {
       resource: 'styles',
+      userId: auth.session.user.id,
       folderId: null,
       kind: null,
       scope: null,
